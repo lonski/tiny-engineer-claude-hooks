@@ -21,7 +21,8 @@ const SUFFIX = ".json";
 /**
  * agents: background subagents still running, agent_id → last event (epoch ms).
  * waitingFor: owners of the open prompts, agent_id or "" for the main agent.
- * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number>, waitingFor: string[] }} SessionState
+ * waitingSince: epoch ms the newest open prompt opened; 0 when none.
+ * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number>, waitingFor: string[], waitingSince: number }} SessionState
  */
 
 /**
@@ -70,6 +71,7 @@ function parseState(raw) {
     oneShotUntil: Number.isFinite(value.oneShotUntil) ? value.oneShotUntil : 0,
     agents: parseAgents(value.agents),
     waitingFor: parseWaitingFor(value.waitingFor, value.status),
+    waitingSince: Number.isFinite(value.waitingSince) ? value.waitingSince : 0,
   };
 }
 

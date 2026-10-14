@@ -21,7 +21,7 @@ function tempDir() {
 }
 
 function state(overrides = {}) {
-  return { status: "working", anim: "typing", updatedAt: NOW, oneShotUntil: 0, agents: {}, waitingFor: [], ...overrides };
+  return { status: "working", anim: "typing", updatedAt: NOW, oneShotUntil: 0, agents: {}, waitingFor: [], waitingSince: 0, ...overrides };
 }
 
 test("stateDir honours TINY_ENGINEER_STATE_DIR, else ~/.cache", () => {
@@ -62,7 +62,7 @@ test("running subagents round-trip; malformed entries are dropped", () => {
 test("waitingFor round-trips; older and malformed values read safely", () => {
   const dir = tempDir();
   const write = (id, value) => writeFileSync(join(dir, `${id}.json`), JSON.stringify(value));
-  writeSession(dir, "a", state({ status: "waiting", waitingFor: ["", "a1"] }));
+  writeSession(dir, "a", state({ status: "waiting", waitingFor: ["", "a1"], waitingSince: NOW - 5 }));
   write("b", { ...state(), waitingFor: 42 });
   write("c", { status: "working", anim: null, updatedAt: NOW });
   write("d", { ...state({ status: "waiting" }), waitingFor: "a1" });
@@ -70,8 +70,18 @@ test("waitingFor round-trips; older and malformed values read safely", () => {
   write("f", { ...state({ status: "waiting" }), waitingFor: ["", 5, "x".repeat(200), "a.b:c", "a1", "a1"] });
   const sessions = readSessions(dir, NOW);
   assert.deepEqual(sessions.get("a").waitingFor, ["", "a1"]);
+  assert.equal(sessions.get("a").waitingSince, NOW - 5);
+  assert.equal(sessions.get("b").waitingSince, 0);
   assert.deepEqual(sessions.get("b").waitingFor, []);
-  assert.deepEqual(sessions.get("c"), { status: "working", anim: null, updatedAt: NOW, oneShotUntil: 0, agents: {}, waitingFor: [] });
+  assert.deepEqual(sessions.get("c"), {
+    status: "working",
+    anim: null,
+    updatedAt: NOW,
+    oneShotUntil: 0,
+    agents: {},
+    waitingFor: [],
+    waitingSince: 0,
+  });
   assert.deepEqual(sessions.get("d").waitingFor, ["a1"], "single owner from the previous format");
   assert.deepEqual(sessions.get("e").waitingFor, [""], "a waiting session without an owner waits on the main agent");
   assert.deepEqual(sessions.get("f").waitingFor, ["", "a.b:c", "a1"]);

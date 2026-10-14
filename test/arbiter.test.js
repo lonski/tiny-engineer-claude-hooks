@@ -207,6 +207,37 @@ test("a permission-prompt notification while waiting re-asks without taking the 
   assert.deepEqual(note.nextSelf.waitingFor, [BG]);
 });
 
+test("a permission-prompt notification before its PermissionRequest is a placeholder the request takes over", () => {
+  const note = run({ hook_event_name: "Notification", notification_type: "permission_prompt" }).nextSelf;
+  assert.deepEqual(note.waitingFor, ["*"]);
+  const asked = run({ hook_event_name: "PermissionRequest", agent_id: BG }, [], note).nextSelf;
+  assert.deepEqual(asked.waitingFor, [BG]);
+  const main = run({ hook_event_name: "PostToolBatch" }, [], asked);
+  assert.equal(main.post, null, "the main agent does not answer the subagent's prompt");
+  const answered = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], main.nextSelf);
+  assert.equal(answered.post, "thinking");
+  assert.equal(answered.nextSelf.status, "working");
+});
+
+test("a placeholder prompt closes on any agent's answer", () => {
+  const next = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], waitingOn(["*"], running(BG)));
+  assert.equal(next.post, "thinking");
+  assert.deepEqual(next.nextSelf.waitingFor, []);
+});
+
+test("an elicitation dialog while another prompt is open is a prompt of its own", () => {
+  const elicit = run(
+    { hook_event_name: "Notification", notification_type: "elicitation_dialog" },
+    [],
+    waitingOn([BG], running(BG))
+  );
+  assert.equal(elicit.post, "attention");
+  assert.deepEqual([...elicit.nextSelf.waitingFor].sort(), [MAIN, BG].sort());
+  const bgAnswered = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], elicit.nextSelf);
+  assert.equal(bgAnswered.post, null);
+  assert.deepEqual(bgAnswered.nextSelf.waitingFor, [MAIN]);
+});
+
 test("the user's next prompt clears every open prompt", () => {
   const typed = run({ hook_event_name: "UserPromptSubmit" }, [], waitingOn([BG, MAIN], running(BG)));
   assert.equal(typed.post, "reading");
@@ -214,11 +245,35 @@ test("the user's next prompt clears every open prompt", () => {
   assert.deepEqual(typed.nextSelf.waitingFor, []);
 });
 
-test("a prompt whose subagent is no longer running ends", () => {
-  const next = run({ hook_event_name: "PostToolBatch" }, [], waitingOn([BG], {}));
+test("a subagent's prompt stays open while it is silent past AGENT_TTL_MS", () => {
+  const self = { ...waitingOn([BG], { [BG]: NOW - AGENT_TTL_MS - 1 }), waitingSince: NOW - AGENT_TTL_MS - 1 };
+  const reminder = run({ hook_event_name: "Notification", notification_type: "idle_prompt" }, [], self);
+  assert.equal(reminder.post, "attention");
+  assert.deepEqual(reminder.nextSelf.waitingFor, [BG]);
+  const main = run({ hook_event_name: "PostToolBatch" }, [], self);
+  assert.equal(main.post, null);
+  assert.deepEqual(main.nextSelf.waitingFor, [BG]);
+});
+
+test("an untracked subagent that asks is registered; its racing PreToolUse keeps attention", () => {
+  const asked = run({ hook_event_name: "PermissionRequest", agent_id: BG }).nextSelf;
+  assert.deepEqual(asked.waitingFor, [BG]);
+  assert.equal(asked.agents[BG], NOW);
+  const tool = run({ hook_event_name: "PreToolUse", tool_name: "Bash", agent_id: BG }, [], asked);
+  assert.equal(tool.post, null);
+  assert.deepEqual(tool.nextSelf.waitingFor, [BG]);
+});
+
+test("the 30 min backstop counts from when the prompt opened, not from the latest event", () => {
+  const old = { ...waitingOn([BG], running(BG)), updatedAt: NOW - 1000, waitingSince: NOW - WAITING_TTL_MS - 1 };
+  const next = run({ hook_event_name: "PostToolBatch" }, [], old);
   assert.equal(next.post, "thinking");
   assert.equal(next.nextSelf.status, "working");
-  assert.deepEqual(next.nextSelf.waitingFor, []);
+  assert.equal(run(READ, [old]).post, "reading", "another session stops deferring to it too");
+  const kept = run({ hook_event_name: "PostToolBatch" }, [], { ...old, waitingSince: NOW - 60_000 });
+  assert.equal(kept.nextSelf.waitingSince, NOW - 60_000, "other agents' events do not move it");
+  assert.equal(run(PERMISSION).nextSelf.waitingSince, NOW);
+  assert.equal(run(READ).nextSelf.waitingSince, 0);
 });
 
 test("SubagentStart answers like the main agent; an id-less SubagentStop never answers", () => {
@@ -330,5 +385,6 @@ test("next state records the requested animation and time", () => {
     oneShotUntil: 0,
     agents: {},
     waitingFor: [],
+    waitingSince: 0,
   });
 });

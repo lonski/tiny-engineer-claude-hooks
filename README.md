@@ -123,7 +123,8 @@ Each hook records its session in `~/.cache/tiny-engineer/claude-code/sessions/`
 - A session asking for permission keeps the robot in `attention`; other sessions' poses are
   skipped until you answer it. Inside the session each prompt belongs to the agent that asked
   (the main agent or a subagent): only its own answer closes it, and the other agents' poses are
-  skipped too. Your next prompt, or the asking subagent ending, closes it as well.
+  skipped too. Your next prompt, or the asking subagent ending, closes it as well. A
+  subagent's prompt stays open however long the subagent waits on it.
 - `ring`, `welcome`, `abort`, and `error` play to the end: no `typing` / `reading` / `thinking`
   cuts them short, whether from another session or the same one (a failed tool's next step,
   its subagents). `attention` and other one-shots still replace them.

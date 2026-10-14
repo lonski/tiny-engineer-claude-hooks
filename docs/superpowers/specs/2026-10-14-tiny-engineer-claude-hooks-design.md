@@ -115,7 +115,8 @@ Directory: `~/.cache/tiny-engineer/claude-code/sessions/`, overridable with
 | `updatedAt` | Epoch ms of this session's latest event |
 | `oneShotUntil` | Epoch ms until which this session's one-shot must not be cut by work animations (its own or other sessions'); `0` when none |
 | `agents` | Running subagents, `agent_id` → epoch ms of its latest event. `SubagentStart` adds, `SubagentStop` removes, the agent's other events refresh; entries older than `AGENT_TTL_MS` (10 min) are dropped. *(Added after use.)* |
-| `waitingFor` | Owners of the open prompts: `agent_id`, or `""` for the main agent. `status` is `waiting` while it is non-empty. Older files (one id, or none while `waiting`) read as a one-owner list. *(Added after use.)* |
+| `waitingFor` | Owners of the open prompts: `agent_id`, `""` for the main agent, `"*"` for a prompt whose owner is not known yet. `status` is `waiting` while it is non-empty. Older files (one id, or none while `waiting`) read as a one-owner list. *(Added after use.)* |
+| `waitingSince` | Epoch ms the newest open prompt opened; `0` when none. `WAITING_TTL_MS` counts from it (else from `updatedAt`). *(Added after review.)* |
 
 Status transitions, applied for every event of the session:
 
@@ -160,12 +161,18 @@ arbiter like main-agent events, so a subagent's events keep or clear the session
 status (answering a subagent's prompt clears it). *(Changed after use: subagent work poses were
 first muted too.)*
 A prompt belongs to the agent that asked (`waitingFor`), and several can be open at once:
-- a blocking event adds its agent (`SubagentStart` counts as the main agent); a
-  `permission_prompt` Notification while a prompt is open only re-announces it;
+- `PermissionRequest` and `elicitation_dialog` add their agent (`SubagentStart` counts as the
+  main agent). A `permission_prompt` Notification only re-announces an open prompt; when it
+  lands before its `PermissionRequest` it holds the place as owner `"*"`, which that request
+  takes over (or any agent's answer closes). A blocking event also registers its subagent in
+  `agents`;
 - an owner's own non-`KEEPS_WAITING` event closes its prompt; other agents' events keep the
   session waiting and post nothing (a reminder re-asks `attention`);
-- the main agent's `UserPromptSubmit` closes all of them (answered, or abandoned with Esc);
-- a subagent owner that left `agents` (its `SubagentStop`, or `AGENT_TTL_MS` silence) is dropped.
+- the main agent's `UserPromptSubmit` closes all of them (answered, or abandoned with Esc), and
+  a subagent's `SubagentStop` closes its own;
+- otherwise `WAITING_TTL_MS` (30 min), counted from `waitingSince` rather than the latest
+  event, is the backstop. *(Changed after review: owners used to drop with `AGENT_TTL_MS`, which
+  closed a silent subagent's prompt after 10 min.)*
 
 Ring once per job *(added after use)*: a background subagent's report-back starts a new
 main-agent turn, so each one used to end in `Stop` → `ring`. A `Stop` while `agents` is
@@ -222,7 +229,9 @@ The robot must never stall or break the agent.
 - Read → decide → write of one session runs under `<session_id>.lock` (exclusive create,
   5 ms retry, 500 ms timeout → stateless fallback; a lock older than 2 s is taken over).
   *(Added after final review: concurrent hooks of one session lost `waiting` ~40% of the
-  time without it.)*
+  time without it.)* On that fallback a subagent's work pose posts nothing *(added after
+  review)*: parallel subagents contend for the lock most, and an unarbitrated work pose would
+  cut `attention` or a one-shot.
 - `SessionStart` with a source other than `startup` waits 300 ms before reading state, so
   the `SessionEnd` of the session it replaces (`/clear`, `/resume`) can remove its file
   first. *(Added after final review.)*

@@ -1,4 +1,4 @@
-import { decide } from "./arbiter.js";
+import { WORK_ANIMS, agentOf, decide } from "./arbiter.js";
 import { DEFAULT_MODE, DEFAULT_URL, MODES, getBaseUrl, getMode, getToken, loadDotEnv, parseMode } from "./env.js";
 import { animationForEvent } from "./map.js";
 import { postAnim } from "./post.js";
@@ -170,7 +170,10 @@ export function arbitrate(event, anim, now = Date.now()) {
       return decision.post;
     });
   } catch {
-    return anim;
+    // Without the session state nothing tells whether a prompt or a one-shot is
+    // playing. Parallel subagents contend for the lock most, so their work poses
+    // give way; everything else posts as for a single session.
+    return agentOf(event) && WORK_ANIMS.has(anim) ? null : anim;
   }
 }
 

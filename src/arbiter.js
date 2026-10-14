@@ -30,17 +30,23 @@ export const ONE_SHOT_MS = new Map([
 const BLOCKING_NOTIFICATIONS = new Set(["permission_prompt", "elicitation_dialog"]);
 
 // Events that never answer a prompt: a PreToolUse racing (or running in parallel
-// with) its own permission prompt, reminder notifications, and SubagentStop (the
-// asking subagent's stop ends its prompt by leaving `agents`).
-const KEEPS_WAITING = new Set(["PreToolUse", "Notification", "SubagentStop"]);
+// with) its own permission prompt, and reminder notifications.
+const KEEPS_WAITING = new Set(["PreToolUse", "Notification"]);
 
 /** waitingFor entry for the main agent. */
 const MAIN = "";
 
 /**
+ * waitingFor entry for a permission prompt whose notification landed before its
+ * PermissionRequest, so its owner is not known yet.
+ */
+const ANY = "*";
+
+/**
  * agents: background subagents still running, agent_id → last event (epoch ms).
  * waitingFor: owners of the open prompts, agent_id or "" for the main agent.
- * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number>, waitingFor: string[] }} SessionState
+ * waitingSince: epoch ms the newest open prompt opened; 0 when none.
+ * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number>, waitingFor: string[], waitingSince: number }} SessionState
  */
 
 /**
@@ -58,7 +64,9 @@ export function isBlocking(event) {
  * @param {number} now
  */
 function isFreshWaiting(session, now) {
-  return session.status === "waiting" && now - session.updatedAt < WAITING_TTL_MS;
+  // Counted from when the prompt opened: other agents' events keep refreshing
+  // updatedAt while it stays open.
+  return session.status === "waiting" && now - (session.waitingSince || session.updatedAt) < WAITING_TTL_MS;
 }
 
 /**
@@ -122,38 +130,57 @@ function runningAgents(event, self, now) {
   const name = event.hook_event_name;
   if (name === "SubagentStart") agents.set(id, now);
   else if (name === "SubagentStop") agents.delete(id);
-  else if (agents.has(id)) agents.set(id, now);
+  // A subagent asking for permission is evidently running, even when its start
+  // was missed or it went silent past AGENT_TTL_MS.
+  else if (agents.has(id) || isBlocking(event)) agents.set(id, now);
   return agents;
+}
+
+/**
+ * Owners of the prompts open before the event.
+ * @param {SessionState | null} self
+ * @param {number} now
+ * @returns {Set<string>}
+ */
+function priorPrompts(self, now) {
+  if (!self || !isFreshWaiting(self, now)) return new Set();
+  return new Set(self.waitingFor?.length ? self.waitingFor : [MAIN]);
 }
 
 /**
  * Owners of the prompts still open after the event. A prompt belongs to the
  * agent that asked, and only that agent's own answer closes it.
- * @param {{ hook_event_name?: string, agent_id?: unknown } | null | undefined} event
+ * @param {{ hook_event_name?: string, agent_id?: unknown, notification_type?: string } | null | undefined} event
  * @param {boolean} blocking
- * @param {SessionState | null} self
- * @param {Map<string, number>} agents running subagents after the event
- * @param {number} now
+ * @param {Set<string>} prior
  * @returns {Set<string>}
  */
-function openPrompts(event, blocking, self, agents, now) {
+function openPrompts(event, blocking, prior) {
   const name = event?.hook_event_name;
   // SubagentStart carries the new subagent's id but is the main agent delegating.
   const actor = name === "SubagentStart" ? MAIN : (agentOf(event) ?? MAIN);
-  const open = new Set();
-  if (self && isFreshWaiting(self, now)) {
-    for (const owner of self.waitingFor?.length ? self.waitingFor : [MAIN]) open.add(owner);
-  }
-  // A subagent that stopped or went silent can no longer be answered.
-  for (const owner of open) if (owner !== MAIN && !agents.has(owner)) open.delete(owner);
+  const open = new Set(prior);
   // The user typing again means every prompt was answered or abandoned (Esc).
   if (name === "UserPromptSubmit" && actor === MAIN) open.clear();
 
-  if (blocking) {
-    // A permission-prompt notification while waiting re-announces an open prompt.
-    if (name !== "Notification" || open.size === 0) open.add(actor);
+  if (name === "PermissionRequest") {
+    // Takes over the placeholder its own notification may have opened first.
+    open.delete(ANY);
+    open.add(actor);
+  } else if (blocking && event.notification_type === "permission_prompt") {
+    // Announces a PermissionRequest: re-announces an open prompt, or holds the
+    // place when it lands first (the request names the owner).
+    if (open.size === 0) open.add(agentOf(event) ?? ANY);
+  } else if (blocking) {
+    // elicitation_dialog: a prompt of its own, with no PermissionRequest.
+    open.add(actor);
+  } else if (name === "SubagentStop") {
+    // A subagent that ended can no longer be answered; it answers nobody else's.
+    const agent = agentOf(event);
+    if (agent) open.delete(agent);
   } else if (!KEEPS_WAITING.has(name)) {
     open.delete(actor);
+    open.delete(ANY);
   }
   return open;
 }
@@ -182,8 +209,14 @@ export function decide({ event, anim, self = null, others = [], now }) {
   const pose = name === "Stop" && agents.size > 0 ? null : anim;
 
   const blocking = isBlocking(event);
-  const open = openPrompts(event, blocking, self, agents, now);
+  const prior = priorPrompts(self, now);
+  const open = openPrompts(event, blocking, prior);
   const waiting = open.size > 0;
+  let waitingSince = 0;
+  if (waiting) {
+    const opened = [...open].some((owner) => !prior.has(owner));
+    waitingSince = opened ? now : self.waitingSince || self.updatedAt;
+  }
   // While a prompt stays open the session only ever re-asks for attention, and
   // any notification (idle_prompt too) re-asks.
   const post =
@@ -203,6 +236,7 @@ export function decide({ event, anim, self = null, others = [], now }) {
       oneShotUntil,
       agents: Object.fromEntries(agents),
       waitingFor: [...open],
+      waitingSince,
     },
   };
 }

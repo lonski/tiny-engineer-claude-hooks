@@ -108,7 +108,8 @@ see each other.
 
 | Symptom | Try |
 | --- | --- |
-| Installer says robot not reachable | Same Wi-Fi/LAN as the robot? VPN off? Re-run with `--url http://<IP>` |
+| Installer says robot not reachable | Same Wi-Fi/LAN as the robot? VPN off? Re-run with `--url http://<IP>`. The reason in parentheses comes from curl (macOS) or Node |
+| Browser reaches the robot, Node gets `EHOSTUNREACH` | macOS local network privacy blocks some Node binaries. That is why requests on macOS go through `/usr/bin/curl`; on other systems they use Node's `fetch` |
 | Nothing happens in Claude Code | New session started? `/hooks` shows `tiny-engineer-claude-hooks`? Organization-managed settings may block user hooks |
 | Robot reacts twice inside the `tiny-engineer` repo | That repo has its own project hooks. Disable them for yourself with a `.claude/settings.local.json` containing `{"hooks": {}}`, or ignore it |
 | Smoke test | `echo '{"hook_event_name":"Stop"}' \| node bin/tiny-engineer-claude-hooks.js` rings the bell |

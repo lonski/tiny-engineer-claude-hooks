@@ -178,7 +178,7 @@ test("creates settings when missing and reports an unreachable robot", async () 
   assert.deepEqual(readdirSync(dir), ["settings.json"]);
   const stop = readSettings(dir).hooks.Stop;
   assert.deepEqual(stop, [{ hooks: [{ type: "command", command: hookCommand(BIN, url), async: true }] }]);
-  assert.match(out, /not reachable/);
+  assert.match(out, /not reachable at \S+ \(.+\)\./);
 });
 
 test("backs up existing settings and keeps them", async () => {

@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_URL } from "./env.js";
+import { robotRequest } from "./post.js";
 
 export const CLAUDE_EVENTS = [
   "SessionStart",
@@ -168,22 +169,23 @@ function baseUrlFrom(env) {
  */
 export async function checkRobot(base, log, timeoutMs = 2000) {
   try {
-    const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (response.ok) {
+    const { status, body } = await robotRequest(base, "/health", { timeoutMs });
+    if (status >= 200 && status < 300) {
       let version = "";
       try {
-        version = (await response.json())?.version ?? "";
+        version = JSON.parse(body)?.version ?? "";
       } catch {
         // Health body is informational only.
       }
       log(`Robot reachable at ${base}${version ? ` (${version})` : ""}`);
       return true;
     }
-    log(`Robot at ${base} answered HTTP ${response.status}`);
+    log(`Robot at ${base} answered HTTP ${status}`);
     return false;
-  } catch {
+  } catch (err) {
+    const reason = err?.cause?.code ?? err?.message ?? String(err);
     log(
-      `Robot not reachable at ${base}. Hooks are installed anyway.\n` +
+      `Robot not reachable at ${base} (${reason}). Hooks are installed anyway.\n` +
         "  - Is this computer on the same network as the robot (VPN off)?\n" +
         "  - .local names can fail: re-run with --url http://<IP shown on the OLED>"
     );

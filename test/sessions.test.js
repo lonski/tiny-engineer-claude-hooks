@@ -20,7 +20,7 @@ function tempDir() {
 }
 
 function state(overrides = {}) {
-  return { status: "working", anim: "typing", updatedAt: NOW, oneShotUntil: 0, ...overrides };
+  return { status: "working", anim: "typing", updatedAt: NOW, oneShotUntil: 0, agents: {}, ...overrides };
 }
 
 test("stateDir honours TINY_ENGINEER_STATE_DIR, else ~/.cache", () => {
@@ -42,6 +42,20 @@ test("isValidSessionId accepts ids and rejects path tricks", () => {
   for (const bad of ["", "../x", "a/b", "a\\b", "a.b", "x".repeat(129), 42, null, undefined]) {
     assert.equal(isValidSessionId(bad), false, String(bad));
   }
+});
+
+test("running subagents round-trip; malformed entries are dropped", () => {
+  const dir = tempDir();
+  writeSession(dir, "a", state({ agents: { a1: NOW - 5, a2: NOW } }));
+  assert.deepEqual(readSessions(dir, NOW).get("a").agents, { a1: NOW - 5, a2: NOW });
+  writeFileSync(
+    join(dir, "b.json"),
+    JSON.stringify({ ...state(), agents: { ok: NOW, bad: "x", ["x".repeat(200)]: NOW } })
+  );
+  writeFileSync(join(dir, "c.json"), JSON.stringify({ ...state(), agents: [1, 2] }));
+  const sessions = readSessions(dir, NOW);
+  assert.deepEqual(sessions.get("b").agents, { ok: NOW });
+  assert.deepEqual(sessions.get("c").agents, {});
 });
 
 test("write then read round-trips sessions", () => {

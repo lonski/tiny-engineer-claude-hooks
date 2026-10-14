@@ -8,6 +8,12 @@ export const WAITING_TTL_MS = 30 * 60 * 1000;
  */
 export const LIFECYCLE_ACTIVE_MS = 10 * 60 * 1000;
 
+/**
+ * A running subagent with no event for this long counts as finished, so a lost
+ * SubagentStop cannot mute the ring for good.
+ */
+export const AGENT_TTL_MS = 10 * 60 * 1000;
+
 export const WORK_ANIMS = new Set(["typing", "reading", "thinking"]);
 
 // Approximate gesture lengths. Other sessions' work poses wait this long so the
@@ -22,11 +28,13 @@ export const ONE_SHOT_MS = new Map([
 const BLOCKING_NOTIFICATIONS = new Set(["permission_prompt", "elicitation_dialog"]);
 
 // Events that do not mean the user answered: a PreToolUse racing (or running in
-// parallel with) the permission prompt, and reminder notifications.
-const KEEPS_WAITING = new Set(["PreToolUse", "Notification"]);
+// parallel with) the permission prompt, reminder notifications, and a subagent
+// finishing.
+const KEEPS_WAITING = new Set(["PreToolUse", "Notification", "SubagentStop"]);
 
 /**
- * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number }} SessionState
+ * agents: background subagents still running, agent_id → last event (epoch ms).
+ * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number> }} SessionState
  */
 
 /**
@@ -79,6 +87,27 @@ function choosePost(name, anim, waiting, others, now) {
 }
 
 /**
+ * Subagents of this session still running after the event: SubagentStart adds
+ * one, SubagentStop removes it, its other events refresh it.
+ * @param {{ hook_event_name?: string, agent_id?: unknown } | null | undefined} event
+ * @param {SessionState | null} self
+ * @param {number} now
+ * @returns {Map<string, number>} agent_id → last event
+ */
+function runningAgents(event, self, now) {
+  const agents = new Map(
+    Object.entries(self?.agents ?? {}).filter(([, seenAt]) => now - seenAt < AGENT_TTL_MS)
+  );
+  const id = event?.agent_id;
+  if (typeof id !== "string" || !id) return agents;
+  const name = event.hook_event_name;
+  if (name === "SubagentStart") agents.set(id, now);
+  else if (name === "SubagentStop") agents.delete(id);
+  else if (agents.has(id)) agents.set(id, now);
+  return agents;
+}
+
+/**
  * Decide what this session may post, given the other live sessions.
  * @param {{
  *   event: object,
@@ -96,6 +125,11 @@ export function decide({ event, anim, self = null, others = [], now }) {
     return { post: holdsLifecycle(others, now) ? null : anim, nextSelf: null };
   }
 
+  const agents = runningAgents(event, self, now);
+  // Running subagents will report back and start another turn; ring after the
+  // turn that follows the last one.
+  const pose = name === "Stop" && agents.size > 0 ? null : anim;
+
   const blocking = isBlocking(event);
   const keptWaiting =
     !blocking && KEEPS_WAITING.has(name) && self !== null && isFreshWaiting(self, now);
@@ -104,13 +138,19 @@ export function decide({ event, anim, self = null, others = [], now }) {
   // any notification (idle_prompt too) re-asks.
   const post = keptWaiting
     ? name === "Notification" ? "attention" : null
-    : choosePost(name, anim, waiting, others, now);
+    : choosePost(name, pose, waiting, others, now);
 
   let oneShotUntil = self?.oneShotUntil ?? 0;
   if (post) oneShotUntil = ONE_SHOT_MS.has(post) ? now + ONE_SHOT_MS.get(post) : 0;
 
   return {
     post,
-    nextSelf: { status: waiting ? "waiting" : "working", anim, updatedAt: now, oneShotUntil },
+    nextSelf: {
+      status: waiting ? "waiting" : "working",
+      anim: pose,
+      updatedAt: now,
+      oneShotUntil,
+      agents: Object.fromEntries(agents),
+    },
   };
 }

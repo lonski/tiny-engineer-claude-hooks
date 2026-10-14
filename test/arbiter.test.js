@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LIFECYCLE_ACTIVE_MS, ONE_SHOT_MS, WAITING_TTL_MS, decide, isBlocking } from "../src/arbiter.js";
+import {
+  AGENT_TTL_MS,
+  LIFECYCLE_ACTIVE_MS,
+  ONE_SHOT_MS,
+  WAITING_TTL_MS,
+  decide,
+  isBlocking,
+} from "../src/arbiter.js";
 import { animationForEvent } from "../src/map.js";
 
 const NOW = 1_800_000_000_000;
@@ -118,6 +125,51 @@ test("idle_prompt after a finished turn posts nothing", () => {
   assert.equal(idle.nextSelf.status, "working");
 });
 
+test("a subagent's events update state without posting", () => {
+  const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0 };
+  const answered = run({ hook_event_name: "PostToolBatch", agent_id: "a1b2" }, [], self);
+  assert.equal(answered.post, null);
+  assert.equal(answered.nextSelf.status, "working");
+  const asking = run({ hook_event_name: "PermissionRequest", agent_id: "a1b2" }, [], answered.nextSelf);
+  assert.equal(asking.post, "attention");
+  assert.equal(asking.nextSelf.status, "waiting");
+});
+
+const BG = "agent-bg";
+
+test("Stop does not ring while a background subagent is running", () => {
+  const started = run({ hook_event_name: "SubagentStart", agent_id: BG }, [], null);
+  assert.equal(started.post, "thinking");
+  const turnEnd = run(STOP, [], started.nextSelf);
+  assert.equal(turnEnd.post, null);
+  const done = run({ hook_event_name: "SubagentStop", agent_id: BG }, [], turnEnd.nextSelf);
+  assert.equal(done.post, null);
+  assert.deepEqual(done.nextSelf.agents, {});
+  assert.equal(run(STOP, [], done.nextSelf).post, "ring");
+});
+
+test("a subagent silent past AGENT_TTL_MS no longer holds the ring", () => {
+  const self = { status: "working", anim: null, updatedAt: NOW - 1000, oneShotUntil: 0 };
+  assert.equal(run(STOP, [], { ...self, agents: { [BG]: NOW - AGENT_TTL_MS + 1000 } }).post, null);
+  const stale = run(STOP, [], { ...self, agents: { [BG]: NOW - AGENT_TTL_MS - 1 } });
+  assert.equal(stale.post, "ring");
+  assert.deepEqual(stale.nextSelf.agents, {});
+});
+
+test("a running subagent's own events keep it alive; unknown agents are not added", () => {
+  const self = { status: "working", anim: null, updatedAt: NOW - 1000, oneShotUntil: 0, agents: { [BG]: NOW - 60_000 } };
+  assert.deepEqual(run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], self).nextSelf.agents, { [BG]: NOW });
+  const stranger = run({ hook_event_name: "PostToolBatch", agent_id: "other" }, [], { ...self, agents: {} });
+  assert.deepEqual(stranger.nextSelf.agents, {});
+});
+
+test("a subagent finishing does not answer a waiting prompt", () => {
+  const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0, agents: { [BG]: NOW - 5000 } };
+  const done = run({ hook_event_name: "SubagentStop", agent_id: BG }, [], self);
+  assert.equal(done.post, null);
+  assert.equal(done.nextSelf.status, "waiting");
+});
+
 test("answering clears waiting", () => {
   const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0 };
   const result = run({ hook_event_name: "PostToolBatch" }, [], self);
@@ -158,5 +210,11 @@ test("a skipped post keeps the previous protection window", () => {
 });
 
 test("next state records the requested animation and time", () => {
-  assert.deepEqual(run(READ).nextSelf, { status: "working", anim: "reading", updatedAt: NOW, oneShotUntil: 0 });
+  assert.deepEqual(run(READ).nextSelf, {
+    status: "working",
+    anim: "reading",
+    updatedAt: NOW,
+    oneShotUntil: 0,
+    agents: {},
+  });
 });

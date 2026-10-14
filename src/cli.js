@@ -52,8 +52,16 @@ Event map:
   PermissionDenied                                 → abort
   Notification (idle_prompt)                       → (skip)
   Notification (any other type)                    → attention
-  Stop                                             → ring
+  SubagentStop                                     → (skip; marks the subagent finished)
+  Stop                                             → ring, unless background subagents still run
   StopFailure                                      → error
+
+Subagents:
+  Events carrying agent_id come from a subagent. They update session state but
+  post nothing, except PermissionRequest / a blocking Notification (attention).
+  SubagentStart is the main agent delegating and still posts thinking.
+  A Stop while background subagents still run posts nothing; the turn after
+  the last one reports back rings. A subagent silent for 10 min counts as done.
 
 Multiple sessions:
   Hooks from concurrent sessions on this computer share state in

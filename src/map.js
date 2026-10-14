@@ -1,3 +1,5 @@
+import { isBlocking } from "./arbiter.js";
+
 export const READING_TOOLS = new Set([
   "Read",
   "Grep",
@@ -29,12 +31,17 @@ const EVENT_ANIM = new Map([
 
 /**
  * Map a Claude Code hook payload to an animation name, or null to skip.
- * @param {{ hook_event_name?: string, tool_name?: string, source?: string, reason?: string }} event
+ * @param {{ hook_event_name?: string, tool_name?: string, source?: string, reason?: string, notification_type?: string, agent_id?: string }} event
  * @returns {string | null}
  */
 export function animationForEvent(event) {
   const name = event?.hook_event_name;
   if (!name) return null;
+
+  // Hooks fire inside subagents too, marked by agent_id. Only the main agent
+  // moves the robot, except for a prompt the user has to answer. SubagentStart
+  // carries the new subagent's agent_id but is the main agent delegating.
+  if (event.agent_id && name !== "SubagentStart" && !isBlocking(event)) return null;
 
   if (name === "PreToolUse") {
     const tool = event.tool_name;

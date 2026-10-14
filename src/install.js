@@ -9,6 +9,7 @@ export const CLAUDE_EVENTS = [
   "SessionEnd",
   "UserPromptSubmit",
   "SubagentStart",
+  "SubagentStop",
   "PreToolUse",
   "PostToolBatch",
   "PostToolUseFailure",

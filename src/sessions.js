@@ -19,7 +19,8 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SUFFIX = ".json";
 
 /**
- * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number }} SessionState
+ * agents: background subagents still running, agent_id → last event (epoch ms).
+ * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number> }} SessionState
  */
 
 /**
@@ -58,7 +59,19 @@ function parseState(raw) {
     anim: typeof value.anim === "string" ? value.anim : null,
     updatedAt: value.updatedAt,
     oneShotUntil: Number.isFinite(value.oneShotUntil) ? value.oneShotUntil : 0,
+    agents: parseAgents(value.agents),
   };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {Record<string, number>}
+ */
+function parseAgents(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([id, seenAt]) => ID_PATTERN.test(id) && Number.isFinite(seenAt))
+  );
 }
 
 /**

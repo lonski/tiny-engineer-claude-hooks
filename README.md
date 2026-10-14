@@ -77,7 +77,18 @@ The installer never writes the token into Claude Code settings.
 | `Notification` `idle_prompt` (about 1 min after a finished turn) | (skip), unless a prompt is still waiting |
 | `PermissionDenied` | `abort` |
 | `PostToolUseFailure`, `StopFailure` | `error` |
-| `Stop` | `ring` |
+| `SubagentStop` | (nothing; marks that subagent finished) |
+| `Stop` | `ring`, once no background subagent is still running |
+
+Only the main agent moves the robot. Hooks also fire inside subagents (their input carries
+`agent_id`); those events update the session's state but play nothing, except a subagent's
+permission prompt, which still plays `attention`. `SubagentStart` still plays `thinking`.
+
+The bell means the whole job is done. A turn that ends while background subagents are still
+running plays nothing; each one reports back with a new turn, and the turn after the last one
+rings. A subagent with no event for 10 min counts as finished, so a lost `SubagentStop` cannot
+mute the bell for good. After updating from a version without `SubagentStop`, re-run
+`node install.js` to add that hook.
 
 ## Multiple sessions
 

@@ -223,7 +223,7 @@ test("dry run writes nothing", async () => {
   const dir = tempConfig();
   const { code, out } = await install(["--dry-run"], dir);
   assert.equal(code, 0);
-  assert.match(out, /Would write 13 hooks/);
+  assert.match(out, /Would write 14 hooks/);
   assert.equal(existsSync(join(dir, "settings.json")), false);
 });
 
@@ -233,7 +233,7 @@ test("uninstall removes managed hooks and keeps the rest", async () => {
   await install(["--url", await closedUrl()], dir);
   const { code, out } = await install(["--uninstall"], dir);
   assert.equal(code, 0);
-  assert.match(out, /Removed 13 hook/);
+  assert.match(out, /Removed 14 hook/);
   assert.deepEqual(readSettings(dir), { model: "opus" });
 });
 

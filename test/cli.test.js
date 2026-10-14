@@ -67,6 +67,50 @@ test("two sessions: waiting wins, sleep only for the last one", async () => {
   }
 });
 
+test("only the main agent moves the robot, except a subagent's permission prompt", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  const sub = { session_id: A, agent_id: "a1b2", agent_type: "Explore" };
+  try {
+    const steps = [
+      { session_id: A, hook_event_name: "UserPromptSubmit" },
+      { ...sub, hook_event_name: "SubagentStart" },
+      { ...sub, hook_event_name: "PreToolUse", tool_name: "Bash" },
+      { ...sub, hook_event_name: "PermissionRequest" },
+      { ...sub, hook_event_name: "PostToolBatch" },
+      { ...sub, hook_event_name: "PreToolUse", tool_name: "Read" },
+      { ...sub, hook_event_name: "SubagentStop" },
+      { session_id: A, hook_event_name: "Stop" },
+    ];
+    for (const event of steps) await hook(robot, dir, event);
+    assert.deepEqual(robot.posts, ["reading", "thinking", "attention", "ring"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("rings once, when the last background subagent has reported back", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  const agent = (id, name) => ({ session_id: A, agent_id: id, agent_type: "general-purpose", hook_event_name: name });
+  try {
+    const steps = [
+      { session_id: A, hook_event_name: "UserPromptSubmit" },
+      agent("bg1", "SubagentStart"),
+      agent("bg2", "SubagentStart"),
+      { session_id: A, hook_event_name: "Stop" },
+      agent("bg1", "SubagentStop"),
+      { session_id: A, hook_event_name: "Stop" },
+      agent("bg2", "SubagentStop"),
+      { session_id: A, hook_event_name: "Stop" },
+    ];
+    for (const event of steps) await hook(robot, dir, event);
+    assert.deepEqual(robot.posts, ["reading", "thinking", "thinking", "ring"]);
+  } finally {
+    await robot.close();
+  }
+});
+
 test("/clear: the new session wakes up even when the old one's SessionEnd races it", async () => {
   const robot = await startRobot();
   const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));

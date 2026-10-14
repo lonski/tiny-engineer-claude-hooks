@@ -66,6 +66,32 @@ test("idle_prompt is skipped; other notifications ask for attention", () => {
   }
 });
 
+test("subagent events are skipped unless they need the user", () => {
+  const sub = { agent_id: "a1b2", agent_type: "Explore" };
+  for (const event of [
+    { hook_event_name: "PreToolUse", tool_name: "Bash" },
+    { hook_event_name: "PreToolUse", tool_name: "Read" },
+    { hook_event_name: "PostToolBatch" },
+    { hook_event_name: "PostToolUseFailure" },
+    { hook_event_name: "PermissionDenied" },
+    { hook_event_name: "PreCompact" },
+    { hook_event_name: "Notification", notification_type: "auth_success" },
+  ]) {
+    assert.equal(animationForEvent({ ...event, ...sub }), null, JSON.stringify(event));
+  }
+  assert.equal(animationForEvent({ hook_event_name: "PermissionRequest", ...sub }), "attention");
+  assert.equal(
+    animationForEvent({ hook_event_name: "Notification", notification_type: "permission_prompt", ...sub }),
+    "attention"
+  );
+  assert.equal(animationForEvent({ hook_event_name: "SubagentStart", ...sub }), "thinking");
+  // --agent sessions carry agent_type without agent_id; they are the main agent.
+  assert.equal(
+    animationForEvent({ hook_event_name: "PreToolUse", tool_name: "Bash", agent_type: "reviewer" }),
+    "typing"
+  );
+});
+
 test("SessionStart welcomes only a fresh launch; every other start wakes up", () => {
   assert.equal(
     animationForEvent({ hook_event_name: "SessionStart", source: "startup" }),

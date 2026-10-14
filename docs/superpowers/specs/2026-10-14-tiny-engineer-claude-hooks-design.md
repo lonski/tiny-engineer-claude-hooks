@@ -67,8 +67,8 @@ apart from upstream's (`tiny-engineer-claude-code`, `hook claude-code`).
 `node install.js [--url <base>] [--uninstall] [--dry-run] [-h|--help]`
 
 - Target: `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json` (global, all projects).
-- Events (13, same as upstream): `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
-  `SubagentStart`, `PreToolUse`, `PostToolBatch`, `PostToolUseFailure`, `PreCompact`,
+- Events (14: upstream's 13 plus `SubagentStop`): `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
+  `SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolBatch`, `PostToolUseFailure`, `PreCompact`,
   `PermissionRequest`, `PermissionDenied`, `Notification`, `Stop`, `StopFailure`.
 - Each event gets `{ "hooks": [{ "type": "command", "command": <cmd>, "async": true }] }`,
   where `<cmd>` is `node "<absolute bin path>"` plus ` --url "<base>"` when `--url` is given.
@@ -105,7 +105,7 @@ Directory: `~/.cache/tiny-engineer/claude-code/sessions/`, overridable with
 `<session_id>.json`, where `session_id` comes from the hook payload.
 
 ```json
-{ "status": "working", "anim": "typing", "updatedAt": 1739500000000, "oneShotUntil": 0 }
+{ "status": "working", "anim": "typing", "updatedAt": 1739500000000, "oneShotUntil": 0, "agents": {} }
 ```
 
 | Field | Meaning |
@@ -114,6 +114,7 @@ Directory: `~/.cache/tiny-engineer/claude-code/sessions/`, overridable with
 | `anim` | Last animation this session asked for (diagnostics only) |
 | `updatedAt` | Epoch ms of this session's latest event |
 | `oneShotUntil` | Epoch ms until which this session's one-shot must not be cut by other sessions' work animations; `0` when none |
+| `agents` | Running subagents, `agent_id` → epoch ms of its latest event. `SubagentStart` adds, `SubagentStop` removes, the agent's other events refresh; entries older than `AGENT_TTL_MS` (10 min) are dropped. *(Added after use.)* |
 
 Status transitions, applied for every event of the session:
 
@@ -145,6 +146,17 @@ session that died without `SessionEnd` mutes `welcome` / `sleep` for at most 10 
 *(Added after final review.)*
 
 ## Decision rules
+
+Subagents *(added after use)*: hooks from settings files also fire inside subagents, and their
+input carries `agent_id` (main-agent events, including `--agent` sessions, have none).
+`animationForEvent` returns `null` for such events unless they are blocking (`isBlocking`) or
+`SubagentStart`. They still run through the arbiter, so a subagent's events keep or clear the
+session's `waiting` status (answering a subagent's prompt clears it) without posting.
+`SubagentStop` keeps `waiting` (a subagent finishing is not an answer).
+
+Ring once per job *(added after use)*: a background subagent's report-back starts a new
+main-agent turn, so each one used to end in `Stop` → `ring`. A `Stop` while `agents` is
+non-empty now posts nothing; the turn after the last `SubagentStop` rings.
 
 On each event from session S:
 

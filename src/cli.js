@@ -1,6 +1,14 @@
+import { decide } from "./arbiter.js";
 import { DEFAULT_URL, getBaseUrl, getToken, loadDotEnv } from "./env.js";
 import { animationForEvent } from "./map.js";
 import { postAnim } from "./post.js";
+import {
+  isValidSessionId,
+  readSessions,
+  removeSession,
+  stateDir,
+  writeSession,
+} from "./sessions.js";
 
 function printHelp() {
   console.log(`Usage: tiny-engineer-claude-hooks [options]
@@ -44,6 +52,14 @@ Event map:
   Notification                                     → attention
   Stop                                             → ring
   StopFailure                                      → error
+
+Multiple sessions:
+  Hooks from concurrent sessions on this computer share state in
+  TINY_ENGINEER_STATE_DIR (default ~/.cache/tiny-engineer/claude-code/sessions).
+  A session asking for permission keeps attention until it is answered;
+  ring/welcome/abort/error are not cut short by another session's work poses;
+  welcome/wakeup play only for the first session and sleep only for the last.
+  Events without session_id, or any state error, behave as a single session.
 
 Examples:
   echo '{"hook_event_name":"Stop"}' | tiny-engineer-claude-hooks
@@ -97,6 +113,39 @@ function readStdin() {
 }
 
 /**
+ * Filter an animation against the other live sessions and record this session's
+ * state. Without a usable session_id or state dir, return anim unchanged.
+ * @param {object | null} event
+ * @param {string | null} anim
+ * @param {number} [now]
+ * @returns {string | null}
+ */
+export function arbitrate(event, anim, now = Date.now()) {
+  const id = event?.session_id;
+  if (!isValidSessionId(id)) return anim;
+
+  let dir;
+  let decision;
+  try {
+    dir = stateDir();
+    const sessions = readSessions(dir, now);
+    const self = sessions.get(id) ?? null;
+    sessions.delete(id);
+    decision = decide({ event, anim, self, others: [...sessions.values()], now });
+  } catch {
+    return anim;
+  }
+
+  try {
+    if (decision.nextSelf) writeSession(dir, id, decision.nextSelf);
+    else removeSession(dir, id);
+  } catch {
+    // State is best effort; the decision still stands.
+  }
+  return decision.post;
+}
+
+/**
  * @param {string[]} argv
  */
 export async function run(argv) {
@@ -124,7 +173,7 @@ export async function run(argv) {
     }
   }
 
-  const anim = animationForEvent(event);
+  const anim = arbitrate(event, animationForEvent(event));
   if (anim) {
     await postAnim(opts.url ?? getBaseUrl(), anim, getToken());
     // A timed-out fetch leaves its connect attempt open, which keeps Node alive

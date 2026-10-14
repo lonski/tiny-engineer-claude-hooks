@@ -71,7 +71,7 @@ Multiple sessions:
   A session asking for permission keeps attention until it is answered, and
   only the agent that asked (main agent or that subagent) can answer it, or
   the user's next prompt;
-  ring/welcome/abort/error are not cut short by another session's work poses;
+  ring/welcome/abort/error are not cut short by any work pose, own or another's;
   welcome/wakeup play only for the first session and sleep only for the last.
   Events without session_id, or any state error, behave as a single session.
 

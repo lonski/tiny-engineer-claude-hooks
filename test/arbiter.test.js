@@ -55,8 +55,9 @@ test("single session: every event posts exactly what the map returns", () => {
     STOP,
     { hook_event_name: "StopFailure" },
   ];
-  // Own previous state must never filter its own events (a waiting self is covered below).
-  const self = { status: "working", anim: "ring", updatedAt: NOW - 10, oneShotUntil: NOW + 5000 };
+  // Own previous state never filters its own events, except a waiting self and
+  // its own one-shot still playing (both covered below).
+  const self = { status: "working", anim: "ring", updatedAt: NOW - 10, oneShotUntil: NOW - 1 };
   for (const event of events) {
     assert.equal(run(event, [], self).post, animationForEvent(event), JSON.stringify(event));
   }
@@ -261,6 +262,25 @@ test("a subagent finishing does not answer a waiting prompt", () => {
   const done = run({ hook_event_name: "SubagentStop", agent_id: BG }, [], self);
   assert.equal(done.post, null);
   assert.equal(done.nextSelf.status, "waiting");
+});
+
+test("a session's own work poses do not cut its one-shot short", () => {
+  const failed = run({ hook_event_name: "PostToolUseFailure" }, [], {
+    status: "working",
+    anim: "typing",
+    updatedAt: NOW - 1000,
+    oneShotUntil: 0,
+    agents: running(BG),
+  }).nextSelf;
+  assert.equal(failed.oneShotUntil, NOW + ONE_SHOT_MS.get("error"));
+  for (const event of [{ hook_event_name: "PostToolBatch" }, READ, { ...READ, agent_id: BG }]) {
+    const held = run(event, [], failed);
+    assert.equal(held.post, null, JSON.stringify(event));
+    assert.equal(held.nextSelf.oneShotUntil, failed.oneShotUntil, "a held pose keeps the window");
+  }
+  assert.equal(run(PERMISSION, [], failed).post, "attention");
+  assert.equal(run(STOP, [], { ...failed, agents: {} }).post, "ring");
+  assert.equal(run(READ, [], { ...failed, oneShotUntil: NOW - 1 }).post, "reading");
 });
 
 test("answering clears waiting", () => {

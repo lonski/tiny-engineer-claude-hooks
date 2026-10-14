@@ -124,8 +124,9 @@ Each hook records its session in `~/.cache/tiny-engineer/claude-code/sessions/`
   skipped until you answer it. Inside the session each prompt belongs to the agent that asked
   (the main agent or a subagent): only its own answer closes it, and the other agents' poses are
   skipped too. Your next prompt, or the asking subagent ending, closes it as well.
-- `ring`, `welcome`, `abort`, and `error` are not cut short by another session's
-  `typing` / `reading` / `thinking`.
+- `ring`, `welcome`, `abort`, and `error` play to the end: no `typing` / `reading` / `thinking`
+  cuts them short, whether from another session or the same one (a failed tool's next step,
+  its subagents). `attention` and other one-shots still replace them.
 - `welcome` / `wakeup` play only when no other session is running; `sleep` only when the last
   session ends.
 - A session silent for 2 h counts as ended; a permission prompt older than 30 min stops blocking.

@@ -22,8 +22,8 @@ sessions. The event → animation map is identical in both.
 1. Clone on any computer, run one command, and every Claude Code session on that machine
    drives the robot.
 2. A session waiting on the user keeps the robot in `attention` until it is answered.
-3. One-shot gestures (`ring`, `welcome`, `abort`, `error`) are not cut short by another
-   session's work animations.
+3. One-shot gestures (`ring`, `welcome`, `abort`, `error`) are not cut short by work
+   animations, another session's or *(changed after use)* the same session's.
 4. `sleep` only when the last session ends; no `welcome`/`wakeup` while others are active.
 5. With exactly one session, behavior is identical to upstream's CLI.
 
@@ -113,7 +113,7 @@ Directory: `~/.cache/tiny-engineer/claude-code/sessions/`, overridable with
 | `status` | `waiting` or `working` (see below) |
 | `anim` | Last animation this session asked for (diagnostics only) |
 | `updatedAt` | Epoch ms of this session's latest event |
-| `oneShotUntil` | Epoch ms until which this session's one-shot must not be cut by other sessions' work animations; `0` when none |
+| `oneShotUntil` | Epoch ms until which this session's one-shot must not be cut by work animations (its own or other sessions'); `0` when none |
 | `agents` | Running subagents, `agent_id` → epoch ms of its latest event. `SubagentStart` adds, `SubagentStop` removes, the agent's other events refresh; entries older than `AGENT_TTL_MS` (10 min) are dropped. *(Added after use.)* |
 | `waitingFor` | Owners of the open prompts: `agent_id`, or `""` for the main agent. `status` is `waiting` while it is non-empty. Older files (one id, or none while `waiting`) read as a one-owner list. *(Added after use.)* |
 
@@ -185,7 +185,7 @@ On each event from session S:
 | --- | --- | --- |
 | 1 | This event set S to `waiting` (`PermissionRequest` or a blocking `Notification`) | post |
 | 2 | Another live session is `waiting` (younger than 30 min) | skip |
-| 3 | `anim` is a work animation (`typing`, `reading`, `thinking`) and another live session has `oneShotUntil > now` | skip |
+| 3 | `anim` is a work animation (`typing`, `reading`, `thinking`) and S or another live session has `oneShotUntil > now` | skip |
 | 4 | Otherwise | post |
 
 One-shot protection windows (constants, approximate gesture lengths; tune on
@@ -196,8 +196,10 @@ different sessions replace each other normally; the newest wins.
 rule 2 skipped it). When S posts a non-one-shot, its `oneShotUntil` resets to `0`;
 when S posts nothing, it keeps its previous value.
 
-Single-session parity: rules 2–3 and the overrides in step 2 only look at *other*
-sessions, so with one session every event yields upstream's result.
+Single-session parity: rule 2 and the overrides in step 2 only look at *other* sessions.
+Rule 3 also holds S's own work animations during S's one-shot *(changed after use: a failed
+tool's `PostToolBatch` cut `error` short)*, so with one session that is the only difference
+from upstream.
 
 Edge cases:
 

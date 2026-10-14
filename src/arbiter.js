@@ -74,11 +74,12 @@ function holdsLifecycle(others, now) {
  * @param {string | undefined} name
  * @param {string | null} anim
  * @param {boolean} waiting
+ * @param {SessionState | null} self
  * @param {SessionState[]} others
  * @param {number} now
  * @returns {string | null}
  */
-function choosePost(name, anim, waiting, others, now) {
+function choosePost(name, anim, waiting, self, others, now) {
   if (!anim) return null;
   if (name === "SessionStart" && holdsLifecycle(others, now)) return null;
   if (waiting) return anim;
@@ -86,8 +87,10 @@ function choosePost(name, anim, waiting, others, now) {
   const otherWaiting = others.some((o) => isFreshWaiting(o, now));
   if (otherWaiting) return null;
 
-  const otherOneShot = others.some((o) => o.oneShotUntil > now);
-  if (WORK_ANIMS.has(anim) && otherOneShot) return null;
+  // A one-shot gesture plays to the end: no work pose cuts it short, whether it
+  // comes from this session (a failed tool's PostToolBatch, its subagents) or another.
+  const oneShotPlaying = (self?.oneShotUntil ?? 0) > now || others.some((o) => o.oneShotUntil > now);
+  if (WORK_ANIMS.has(anim) && oneShotPlaying) return null;
 
   return anim;
 }
@@ -186,7 +189,7 @@ export function decide({ event, anim, self = null, others = [], now }) {
   const post =
     waiting && !blocking
       ? name === "Notification" ? "attention" : null
-      : choosePost(name, pose, waiting, others, now);
+      : choosePost(name, pose, waiting, self, others, now);
 
   let oneShotUntil = self?.oneShotUntil ?? 0;
   if (post) oneShotUntil = ONE_SHOT_MS.has(post) ? now + ONE_SHOT_MS.get(post) : 0;

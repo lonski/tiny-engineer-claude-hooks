@@ -100,9 +100,10 @@ export function decide({ event, anim, self = null, others = [], now }) {
   const keptWaiting =
     !blocking && KEEPS_WAITING.has(name) && self !== null && isFreshWaiting(self, now);
   const waiting = blocking || keptWaiting;
-  // A session still waiting on the user only ever re-asks for attention.
+  // A session still waiting on the user only ever re-asks for attention, and
+  // any notification (idle_prompt too) re-asks.
   const post = keptWaiting
-    ? anim === "attention" ? anim : null
+    ? name === "Notification" ? "attention" : null
     : choosePost(name, anim, waiting, others, now);
 
   let oneShotUntil = self?.oneShotUntil ?? 0;

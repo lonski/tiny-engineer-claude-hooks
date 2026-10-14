@@ -111,6 +111,13 @@ test("a waiting session stays waiting through PreToolUse and reminders", () => {
   assert.equal(run(BASH, [], stale).nextSelf.status, "working");
 });
 
+test("idle_prompt after a finished turn posts nothing", () => {
+  const self = { status: "working", anim: "ring", updatedAt: NOW - 60_000, oneShotUntil: 0 };
+  const idle = run({ hook_event_name: "Notification", notification_type: "idle_prompt" }, [], self);
+  assert.equal(idle.post, null);
+  assert.equal(idle.nextSelf.status, "working");
+});
+
 test("answering clears waiting", () => {
   const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0 };
   const result = run({ hook_event_name: "PostToolBatch" }, [], self);

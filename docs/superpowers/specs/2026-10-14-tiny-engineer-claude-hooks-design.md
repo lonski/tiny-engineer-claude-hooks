@@ -179,7 +179,9 @@ Edge cases:
 - S is answered while session B is still `waiting`: rule 2 keeps skipping, the robot
   stays in `attention` (firmware returns to idle after its ~1 min waiting loop). No
   reminder is re-posted.
-- `idle_prompt` still posts `attention` via the map but never blocks others.
+- `idle_prompt` posts nothing via the map: Claude Code sends it about a minute after a
+  finished turn, which replayed `attention` right after `ring`. A session still `waiting`
+  re-asks `attention` with it. It never blocks others. *(Changed after use.)*
 
 ## Error handling
 

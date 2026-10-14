@@ -56,5 +56,12 @@ export function animationForEvent(event) {
     return event.reason === "clear" || event.reason === "resume" ? null : "sleep";
   }
 
+  // Claude Code sends idle_prompt about a minute after a finished turn, which
+  // would replay attention right after the ring. The arbiter still uses it to
+  // re-ask for a prompt that is waiting on the user.
+  if (name === "Notification" && event.notification_type === "idle_prompt") {
+    return null;
+  }
+
   return EVENT_ANIM.get(name) ?? null;
 }

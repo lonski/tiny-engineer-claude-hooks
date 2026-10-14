@@ -52,6 +52,20 @@ test("lifecycle events map to their poses", () => {
   assert.equal(animationForEvent({ hook_event_name: "StopFailure" }), "error");
 });
 
+test("idle_prompt is skipped; other notifications ask for attention", () => {
+  assert.equal(
+    animationForEvent({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+    null
+  );
+  for (const type of ["elicitation_dialog", "auth_success", undefined]) {
+    assert.equal(
+      animationForEvent({ hook_event_name: "Notification", notification_type: type }),
+      "attention",
+      String(type)
+    );
+  }
+});
+
 test("SessionStart welcomes only a fresh launch; every other start wakes up", () => {
   assert.equal(
     animationForEvent({ hook_event_name: "SessionStart", source: "startup" }),

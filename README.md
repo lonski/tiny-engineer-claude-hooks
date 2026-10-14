@@ -74,6 +74,7 @@ The installer never writes the token into Claude Code settings.
 | `PreToolUse` Bash/PowerShell/Edit/Write/NotebookEdit | `typing` |
 | `SubagentStart`, `PostToolBatch`, `PreCompact` | `thinking` |
 | `PermissionRequest`, `Notification` | `attention` |
+| `Notification` `idle_prompt` (about 1 min after a finished turn) | (skip), unless a prompt is still waiting |
 | `PermissionDenied` | `abort` |
 | `PostToolUseFailure`, `StopFailure` | `error` |
 | `Stop` | `ring` |

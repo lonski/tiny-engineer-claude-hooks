@@ -50,7 +50,8 @@ Event map:
   PreCompact                                       → thinking
   PermissionRequest                                → attention
   PermissionDenied                                 → abort
-  Notification                                     → attention
+  Notification (idle_prompt)                       → (skip)
+  Notification (any other type)                    → attention
   Stop                                             → ring
   StopFailure                                      → error
 

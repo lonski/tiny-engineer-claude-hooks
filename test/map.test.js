@@ -66,15 +66,19 @@ test("idle_prompt is skipped; other notifications ask for attention", () => {
   }
 });
 
-test("subagent events are skipped unless they need the user", () => {
+test("subagent events keep work poses and prompts; other poses stay the main agent's", () => {
   const sub = { agent_id: "a1b2", agent_type: "Explore" };
+  for (const [event, pose] of [
+    [{ hook_event_name: "PreToolUse", tool_name: "Bash" }, "typing"],
+    [{ hook_event_name: "PreToolUse", tool_name: "Read" }, "reading"],
+    [{ hook_event_name: "PostToolBatch" }, "thinking"],
+    [{ hook_event_name: "PreCompact" }, "thinking"],
+  ]) {
+    assert.equal(animationForEvent({ ...event, ...sub }), pose, JSON.stringify(event));
+  }
   for (const event of [
-    { hook_event_name: "PreToolUse", tool_name: "Bash" },
-    { hook_event_name: "PreToolUse", tool_name: "Read" },
-    { hook_event_name: "PostToolBatch" },
     { hook_event_name: "PostToolUseFailure" },
     { hook_event_name: "PermissionDenied" },
-    { hook_event_name: "PreCompact" },
     { hook_event_name: "Notification", notification_type: "auth_success" },
   ]) {
     assert.equal(animationForEvent({ ...event, ...sub }), null, JSON.stringify(event));
@@ -89,6 +93,29 @@ test("subagent events are skipped unless they need the user", () => {
   assert.equal(
     animationForEvent({ hook_event_name: "PreToolUse", tool_name: "Bash", agent_type: "reviewer" }),
     "typing"
+  );
+});
+
+test("muted-subagents mode plays only a subagent's prompts and SubagentStart", () => {
+  const sub = { agent_id: "a1b2", agent_type: "Explore" };
+  const muted = (event) => animationForEvent(event, "muted-subagents");
+  for (const event of [
+    { hook_event_name: "PreToolUse", tool_name: "Bash" },
+    { hook_event_name: "PreToolUse", tool_name: "Read" },
+    { hook_event_name: "PostToolBatch" },
+    { hook_event_name: "PreCompact" },
+    { hook_event_name: "PostToolUseFailure" },
+    { hook_event_name: "PermissionDenied" },
+  ]) {
+    assert.equal(muted({ ...event, ...sub }), null, JSON.stringify(event));
+  }
+  assert.equal(muted({ hook_event_name: "PermissionRequest", ...sub }), "attention");
+  assert.equal(muted({ hook_event_name: "SubagentStart", ...sub }), "thinking");
+  assert.equal(muted({ hook_event_name: "PreToolUse", tool_name: "Bash" }), "typing");
+  assert.equal(
+    animationForEvent({ hook_event_name: "PreToolUse", tool_name: "Bash", ...sub }),
+    "typing",
+    "working-subagents is the default"
   );
 });
 
@@ -149,10 +176,17 @@ test("skips missing, unknown, or Cursor-cased hook_event_name", () => {
 });
 
 test("parseArgs reads --url in both forms and rejects unknown args", () => {
-  assert.deepEqual(parseArgs([]), { help: false, url: undefined });
+  assert.deepEqual(parseArgs([]), { help: false, url: undefined, mode: undefined });
   assert.equal(parseArgs(["--url", "http://10.0.0.5"]).url, "http://10.0.0.5");
   assert.equal(parseArgs(["--url=http://10.0.0.5"]).url, "http://10.0.0.5");
   assert.equal(parseArgs(["-h"]).help, true);
   assert.match(parseArgs(["--url"]).error, /requires a value/);
   assert.match(parseArgs(["ring"]).error, /Unknown argument/);
+});
+
+test("parseArgs reads --mode in both forms; an unknown mode falls back instead of failing", () => {
+  assert.equal(parseArgs(["--mode", "muted-subagents"]).mode, "muted-subagents");
+  assert.equal(parseArgs(["--mode=working-subagents"]).mode, "working-subagents");
+  assert.match(parseArgs(["--mode"]).error, /requires a value/);
+  assert.deepEqual(parseArgs(["--mode", "loud"]), { help: false, url: undefined, mode: undefined });
 });

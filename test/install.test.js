@@ -74,10 +74,29 @@ test("hookCommand quotes the path, uses forward slashes, appends --url", () => {
     hookCommand(BIN, "http://192.168.1.154"),
     `node "${BIN}" --url "http://192.168.1.154"`
   );
+  assert.equal(
+    hookCommand(BIN, "http://192.168.1.154", "muted-subagents"),
+    `node "${BIN}" --url "http://192.168.1.154" --mode muted-subagents`
+  );
+  assert.equal(hookCommand(BIN, undefined, "muted-subagents"), `node "${BIN}" --mode muted-subagents`);
+  assert.throws(() => hookCommand(BIN, undefined, "muted-subagents; rm -rf ~"), /invalid mode/);
+});
+
+test("parseInstallArgs validates --mode", () => {
+  assert.equal(parseInstallArgs(["--mode", "muted-subagents"]).mode, "muted-subagents");
+  assert.equal(parseInstallArgs(["--mode=working-subagents"]).mode, "working-subagents");
+  assert.match(parseInstallArgs(["--mode"]).error, /requires a value/);
+  assert.match(parseInstallArgs(["--mode", "loud"]).error, /--mode must be one of/);
 });
 
 test("parseInstallArgs reads flags and validates --url", () => {
-  assert.deepEqual(parseInstallArgs([]), { url: undefined, uninstall: false, dryRun: false, help: false });
+  assert.deepEqual(parseInstallArgs([]), {
+    url: undefined,
+    mode: undefined,
+    uninstall: false,
+    dryRun: false,
+    help: false,
+  });
   assert.equal(parseInstallArgs(["--url", "http://10.0.0.5/"]).url, "http://10.0.0.5");
   assert.equal(parseInstallArgs(["--url=https://robot.lan"]).url, "https://robot.lan");
   assert.equal(parseInstallArgs(["--uninstall"]).uninstall, true);
@@ -179,6 +198,19 @@ test("creates settings when missing and reports an unreachable robot", async () 
   const stop = readSettings(dir).hooks.Stop;
   assert.deepEqual(stop, [{ hooks: [{ type: "command", command: hookCommand(BIN, url), async: true }] }]);
   assert.match(out, /not reachable at \S+ \(.+\)\./);
+});
+
+test("--mode is baked into every hook and kept when re-run without it", async () => {
+  const dir = tempConfig();
+  const url = await closedUrl();
+  const command = () => readSettings(dir).hooks.Stop[0].hooks[0].command;
+  await install(["--url", url, "--mode", "muted-subagents"], dir);
+  assert.equal(command(), hookCommand(BIN, url, "muted-subagents"));
+  const { out } = await install(["--url", url], dir);
+  assert.equal(command(), hookCommand(BIN, url, "muted-subagents"));
+  assert.match(out, /Keeping --mode muted-subagents/);
+  await install(["--url", url, "--mode", "working-subagents"], dir);
+  assert.equal(command(), hookCommand(BIN, url, "working-subagents"));
 });
 
 test("backs up existing settings and keeps them", async () => {

@@ -115,6 +115,7 @@ Directory: `~/.cache/tiny-engineer/claude-code/sessions/`, overridable with
 | `updatedAt` | Epoch ms of this session's latest event |
 | `oneShotUntil` | Epoch ms until which this session's one-shot must not be cut by other sessions' work animations; `0` when none |
 | `agents` | Running subagents, `agent_id` → epoch ms of its latest event. `SubagentStart` adds, `SubagentStop` removes, the agent's other events refresh; entries older than `AGENT_TTL_MS` (10 min) are dropped. *(Added after use.)* |
+| `waitingFor` | Owners of the open prompts: `agent_id`, or `""` for the main agent. `status` is `waiting` while it is non-empty. Older files (one id, or none while `waiting`) read as a one-owner list. *(Added after use.)* |
 
 Status transitions, applied for every event of the session:
 
@@ -149,10 +150,22 @@ session that died without `SessionEnd` mutes `welcome` / `sleep` for at most 10 
 
 Subagents *(added after use)*: hooks from settings files also fire inside subagents, and their
 input carries `agent_id` (main-agent events, including `--agent` sessions, have none).
-`animationForEvent` returns `null` for such events unless they are blocking (`isBlocking`) or
-`SubagentStart`. They still run through the arbiter, so a subagent's events keep or clear the
-session's `waiting` status (answering a subagent's prompt clears it) without posting.
-`SubagentStop` keeps `waiting` (a subagent finishing is not an answer).
+`animationForEvent(event, mode)` always keeps blocking events (`isBlocking`) and drops `error`,
+`abort` and non-blocking `attention`. The mode picks the rest *(added after use)*:
+`working-subagents` (default) keeps work poses (`WORK_ANIMS`), `muted-subagents` keeps only
+`SubagentStart`. Mode source, first wins: hook `--mode` (baked in by `install.js --mode`), then
+`TINY_ENGINEER_MODE` (Claude Code settings `env`, project `.env`, or shell; unknown values fall
+back to the default), then `working-subagents`. They run through the
+arbiter like main-agent events, so a subagent's events keep or clear the session's `waiting`
+status (answering a subagent's prompt clears it). *(Changed after use: subagent work poses were
+first muted too.)*
+A prompt belongs to the agent that asked (`waitingFor`), and several can be open at once:
+- a blocking event adds its agent (`SubagentStart` counts as the main agent); a
+  `permission_prompt` Notification while a prompt is open only re-announces it;
+- an owner's own non-`KEEPS_WAITING` event closes its prompt; other agents' events keep the
+  session waiting and post nothing (a reminder re-asks `attention`);
+- the main agent's `UserPromptSubmit` closes all of them (answered, or abandoned with Esc);
+- a subagent owner that left `agents` (its `SubagentStop`, or `AGENT_TTL_MS` silence) is dropped.
 
 Ring once per job *(added after use)*: a background subagent's report-back starts a new
 main-agent turn, so each one used to end in `Stop` → `ring`. A `Stop` while `agents` is

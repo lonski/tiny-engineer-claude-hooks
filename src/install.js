@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEFAULT_URL } from "./env.js";
+import { DEFAULT_MODE, DEFAULT_URL, MODES, parseMode } from "./env.js";
 import { robotRequest } from "./post.js";
 
 export const CLAUDE_EVENTS = [
@@ -36,7 +36,7 @@ const URL_PATTERN = /^https?:\/\/[^\s"'`\\$]+$/;
 // The bin path is embedded in double quotes; these characters would break or expand it.
 const UNSAFE_PATH = /["`$\\]/;
 
-const HELP = `Usage: node install.js [--url <base>] [--uninstall] [--dry-run]
+const HELP = `Usage: node install.js [--url <base>] [--mode <mode>] [--uninstall] [--dry-run]
 
 Install Tiny Engineer hooks into the global Claude Code settings
 (<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json), for every project.
@@ -44,6 +44,9 @@ Install Tiny Engineer hooks into the global Claude Code settings
 Options:
   --url <base>   Robot base URL baked into the hooks (default: TINY_ENGINEER_URL,
                  else ${DEFAULT_URL})
+  --mode <mode>  Bake a mode into the hooks: ${MODES.join(" | ")}.
+                 Without it a re-run keeps the installed mode; a first install
+                 leaves the hooks to TINY_ENGINEER_MODE, else ${DEFAULT_MODE}
   --uninstall    Remove Tiny Engineer hooks, keep everything else
   --dry-run      Show what would change, write nothing
   -h, --help     Show this help
@@ -61,10 +64,17 @@ export function settingsPath(env = process.env) {
 /**
  * @param {string} binPath absolute path to bin/tiny-engineer-claude-hooks.js
  * @param {string} [url]
+ * @param {string} [mode] one of MODES, so safe to embed unquoted
  */
-export function hookCommand(binPath, url) {
+export function hookCommand(binPath, url, mode) {
   const path = binPath.replace(/\\/g, "/");
-  return url ? `node "${path}" --url "${url}"` : `node "${path}"`;
+  let command = `node "${path}"`;
+  if (url) command += ` --url "${url}"`;
+  if (mode) {
+    if (!MODES.includes(mode)) throw new Error(`invalid mode: ${mode}`);
+    command += ` --mode ${mode}`;
+  }
+  return command;
 }
 
 /**
@@ -72,6 +82,27 @@ export function hookCommand(binPath, url) {
  */
 function isManaged(command) {
   return typeof command === "string" && MANAGED_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+/**
+ * The --mode an earlier install baked into our hooks, so a re-run keeps it.
+ * @param {object} settings
+ * @returns {string | null}
+ */
+export function bakedMode(settings) {
+  const hooks = settings?.hooks;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) return null;
+  for (const wrappers of Object.values(hooks)) {
+    if (!Array.isArray(wrappers)) continue;
+    for (const wrapper of wrappers) {
+      for (const hook of Array.isArray(wrapper?.hooks) ? wrapper.hooks : []) {
+        if (!isManaged(hook?.command)) continue;
+        const mode = parseMode(hook.command.match(/--mode[= ](\S+)/)?.[1]);
+        if (mode) return mode;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -130,7 +161,7 @@ export function addHooks(settings, command) {
  * @param {string[]} argv
  */
 export function parseInstallArgs(argv) {
-  const opts = { url: undefined, uninstall: false, dryRun: false, help: false };
+  const opts = { url: undefined, mode: undefined, uninstall: false, dryRun: false, help: false };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -147,6 +178,12 @@ export function parseInstallArgs(argv) {
         return { error: `--url must be an http:// or https:// URL without spaces or quotes: ${value}` };
       }
       opts.url = value.replace(/\/+$/, "");
+    } else if (arg === "--mode" || arg.startsWith("--mode=")) {
+      const value = arg === "--mode" ? argv[++i] : arg.slice("--mode=".length);
+      if (!value) return { error: "--mode requires a value" };
+      const mode = parseMode(value);
+      if (!mode) return { error: `--mode must be one of ${MODES.join(", ")}: ${value}` };
+      opts.mode = mode;
     } else {
       return { error: `Unknown argument: ${arg}` };
     }
@@ -242,7 +279,12 @@ export async function runInstall(
     }
   }
 
-  const command = hookCommand(binPath, opts.url);
+  let mode = opts.mode;
+  if (!mode && !opts.uninstall) {
+    mode = bakedMode(current) ?? undefined;
+    if (mode) log(`Keeping --mode ${mode} from the installed hooks (pass --mode to change it)`);
+  }
+  const command = hookCommand(binPath, opts.url, mode);
   const { settings: stripped, removed } = removeHooks(current);
   const next = opts.uninstall ? stripped : addHooks(current, command);
 

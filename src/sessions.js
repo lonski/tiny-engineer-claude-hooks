@@ -20,7 +20,8 @@ const SUFFIX = ".json";
 
 /**
  * agents: background subagents still running, agent_id → last event (epoch ms).
- * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number> }} SessionState
+ * waitingFor: owners of the open prompts, agent_id or "" for the main agent.
+ * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number, agents: Record<string, number>, waitingFor: string[] }} SessionState
  */
 
 /**
@@ -30,6 +31,14 @@ export function stateDir() {
   const override = process.env.TINY_ENGINEER_STATE_DIR?.trim();
   if (override) return override;
   return join(homedir(), ".cache", "tiny-engineer", "claude-code", "sessions");
+}
+
+/**
+ * Agent ids are only stored inside the state file, never used as paths.
+ * @param {unknown} id
+ */
+export function isValidAgentId(id) {
+  return typeof id === "string" && /^\S{1,128}$/.test(id);
 }
 
 /**
@@ -60,6 +69,7 @@ function parseState(raw) {
     updatedAt: value.updatedAt,
     oneShotUntil: Number.isFinite(value.oneShotUntil) ? value.oneShotUntil : 0,
     agents: parseAgents(value.agents),
+    waitingFor: parseWaitingFor(value.waitingFor, value.status),
   };
 }
 
@@ -70,8 +80,22 @@ function parseState(raw) {
 function parseAgents(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
-    Object.entries(value).filter(([id, seenAt]) => ID_PATTERN.test(id) && Number.isFinite(seenAt))
+    Object.entries(value).filter(([id, seenAt]) => isValidAgentId(id) && Number.isFinite(seenAt))
   );
+}
+
+/**
+ * Also reads the earlier single-owner format (an id, or null for the main agent).
+ * @param {unknown} value
+ * @param {string} status
+ * @returns {string[]}
+ */
+function parseWaitingFor(value, status) {
+  let owners = [];
+  if (Array.isArray(value)) owners = value;
+  else if (typeof value === "string") owners = [value];
+  else if (status === "waiting") owners = [""];
+  return [...new Set(owners.filter((id) => id === "" || isValidAgentId(id)))];
 }
 
 /**

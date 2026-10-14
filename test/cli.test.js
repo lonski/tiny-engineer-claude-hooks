@@ -21,16 +21,17 @@ async function startRobot() {
   return { posts, url, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
-function hook(robot, stateDirPath, event) {
+function hook(robot, stateDirPath, event, { env: extraEnv = {}, args = [] } = {}) {
   const home = mkdtempSync(join(tmpdir(), "te-hooks-home-"));
   const env = {
     PATH: process.env.PATH,
     HOME: home,
     TINY_ENGINEER_URL: robot.url,
     TINY_ENGINEER_STATE_DIR: stateDirPath,
+    ...extraEnv,
   };
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN], { cwd: home, env, stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd: home, env, stdio: ["pipe", "pipe", "inherit"] });
     let stdout = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.on("error", reject);
@@ -67,7 +68,7 @@ test("two sessions: waiting wins, sleep only for the last one", async () => {
   }
 });
 
-test("only the main agent moves the robot, except a subagent's permission prompt", async () => {
+test("subagents post work poses and prompts, never the bell", async () => {
   const robot = await startRobot();
   const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
   const sub = { session_id: A, agent_id: "a1b2", agent_type: "Explore" };
@@ -78,12 +79,74 @@ test("only the main agent moves the robot, except a subagent's permission prompt
       { ...sub, hook_event_name: "PreToolUse", tool_name: "Bash" },
       { ...sub, hook_event_name: "PermissionRequest" },
       { ...sub, hook_event_name: "PostToolBatch" },
+      { ...sub, hook_event_name: "PostToolUseFailure" },
       { ...sub, hook_event_name: "PreToolUse", tool_name: "Read" },
       { ...sub, hook_event_name: "SubagentStop" },
       { session_id: A, hook_event_name: "Stop" },
     ];
     for (const event of steps) await hook(robot, dir, event);
-    assert.deepEqual(robot.posts, ["reading", "thinking", "attention", "ring"]);
+    assert.deepEqual(robot.posts, ["reading", "thinking", "typing", "attention", "thinking", "reading", "ring"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("a background subagent keeps attention while the main agent's prompt is open", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  try {
+    const steps = [
+      { session_id: A, hook_event_name: "PermissionRequest" },
+      { session_id: A, agent_id: "bg1", hook_event_name: "PostToolBatch" },
+      { session_id: A, agent_id: "bg1", hook_event_name: "PreToolUse", tool_name: "Read" },
+      { session_id: A, hook_event_name: "PostToolBatch" },
+      { session_id: A, agent_id: "bg1", hook_event_name: "PreToolUse", tool_name: "Read" },
+    ];
+    for (const event of steps) await hook(robot, dir, event);
+    assert.deepEqual(robot.posts, ["attention", "thinking", "reading"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("TINY_ENGINEER_MODE=muted-subagents mutes subagent work; --mode overrides it", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  const sub = { session_id: A, agent_id: "a1b2", agent_type: "Explore" };
+  const muted = { env: { TINY_ENGINEER_MODE: "muted-subagents" } };
+  try {
+    const steps = [
+      { session_id: A, hook_event_name: "UserPromptSubmit" },
+      { ...sub, hook_event_name: "SubagentStart" },
+      { ...sub, hook_event_name: "PreToolUse", tool_name: "Bash" },
+      { ...sub, hook_event_name: "PermissionRequest" },
+      { ...sub, hook_event_name: "PostToolBatch" },
+    ];
+    for (const event of steps) await hook(robot, dir, event, muted);
+    await hook(robot, dir, { ...sub, hook_event_name: "PreToolUse", tool_name: "Read" }, {
+      ...muted,
+      args: ["--mode", "working-subagents"],
+    });
+    assert.deepEqual(robot.posts, ["reading", "thinking", "attention", "reading"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("the user's next prompt ends a subagent prompt that was never answered", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  const sub = { session_id: A, agent_id: "a1b2", agent_type: "Explore" };
+  try {
+    const steps = [
+      { ...sub, hook_event_name: "SubagentStart" },
+      { ...sub, hook_event_name: "PermissionRequest" },
+      { session_id: A, hook_event_name: "PreToolUse", tool_name: "Bash" },
+      { session_id: A, hook_event_name: "UserPromptSubmit" },
+      { session_id: A, hook_event_name: "PreToolUse", tool_name: "Bash" },
+    ];
+    for (const event of steps) await hook(robot, dir, event);
+    assert.deepEqual(robot.posts, ["thinking", "attention", "reading", "typing"]);
   } finally {
     await robot.close();
   }

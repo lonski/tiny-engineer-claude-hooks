@@ -3,7 +3,14 @@ import { join } from "node:path";
 
 const TOKEN_KEY = "TINY_ENGINEER_TOKEN";
 const URL_KEY = "TINY_ENGINEER_URL";
+const MODE_KEY = "TINY_ENGINEER_MODE";
 export const DEFAULT_URL = "http://tiny-engineer.local";
+
+/** How subagents move the robot: their work poses show, or only their prompts. */
+export const WORKING_SUBAGENTS = "working-subagents";
+export const MUTED_SUBAGENTS = "muted-subagents";
+export const MODES = [WORKING_SUBAGENTS, MUTED_SUBAGENTS];
+export const DEFAULT_MODE = WORKING_SUBAGENTS;
 
 /**
  * Parse one dotenv line into [key, value] or null.
@@ -78,4 +85,22 @@ export function getBaseUrl() {
   if (value === undefined) return DEFAULT_URL;
   const trimmed = value.trim().replace(/\/+$/, "");
   return trimmed || DEFAULT_URL;
+}
+
+/**
+ * Hooks run in the background where an error goes unseen, so an unknown value
+ * falls back to the default instead of failing.
+ * @returns {string} TINY_ENGINEER_MODE when it names a mode, else DEFAULT_MODE
+ */
+export function getMode() {
+  return parseMode(process.env[MODE_KEY]) ?? DEFAULT_MODE;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string | null} the mode value names, else null
+ */
+export function parseMode(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return MODES.includes(trimmed) ? trimmed : null;
 }

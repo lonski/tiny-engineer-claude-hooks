@@ -125,17 +125,110 @@ test("idle_prompt after a finished turn posts nothing", () => {
   assert.equal(idle.nextSelf.status, "working");
 });
 
-test("a subagent's events update state without posting", () => {
-  const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0 };
-  const answered = run({ hook_event_name: "PostToolBatch", agent_id: "a1b2" }, [], self);
-  assert.equal(answered.post, null);
+const BG = "agent-bg";
+const MAIN = "";
+
+/** A session waiting on these owners; agents lists the running subagents. */
+function waitingOn(owners, agents = {}) {
+  return { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0, agents, waitingFor: owners };
+}
+
+function running(...ids) {
+  return Object.fromEntries(ids.map((id) => [id, NOW - 5000]));
+}
+
+test("a subagent's answered prompt clears waiting and its work poses post", () => {
+  const answered = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], waitingOn([BG], running(BG)));
+  assert.equal(answered.post, "thinking");
   assert.equal(answered.nextSelf.status, "working");
-  const asking = run({ hook_event_name: "PermissionRequest", agent_id: "a1b2" }, [], answered.nextSelf);
+  assert.deepEqual(answered.nextSelf.waitingFor, []);
+  const asking = run({ hook_event_name: "PermissionRequest", agent_id: BG }, [], answered.nextSelf);
   assert.equal(asking.post, "attention");
   assert.equal(asking.nextSelf.status, "waiting");
+  assert.deepEqual(asking.nextSelf.waitingFor, [BG]);
 });
 
-const BG = "agent-bg";
+test("a background subagent's work does not answer the main agent's prompt", () => {
+  const asked = run(PERMISSION).nextSelf;
+  assert.deepEqual(asked.waitingFor, [MAIN]);
+  const background = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], asked);
+  assert.equal(background.post, null);
+  assert.equal(background.nextSelf.status, "waiting");
+  assert.deepEqual(background.nextSelf.waitingFor, [MAIN]);
+  const answered = run({ hook_event_name: "PostToolBatch" }, [], background.nextSelf);
+  assert.equal(answered.post, "thinking");
+  assert.equal(answered.nextSelf.status, "working");
+});
+
+test("the main agent's work does not answer a subagent's prompt; that subagent stopping does", () => {
+  const main = run({ hook_event_name: "PostToolBatch" }, [], waitingOn([BG], running(BG)));
+  assert.equal(main.post, null);
+  assert.equal(main.nextSelf.status, "waiting");
+  assert.deepEqual(main.nextSelf.waitingFor, [BG]);
+  const stopped = run({ hook_event_name: "SubagentStop", agent_id: BG }, [], main.nextSelf);
+  assert.equal(stopped.nextSelf.status, "working");
+  assert.deepEqual(stopped.nextSelf.waitingFor, []);
+});
+
+test("another subagent does not answer a subagent's prompt", () => {
+  const other = run({ hook_event_name: "PostToolBatch", agent_id: "other" }, [], waitingOn([BG], running(BG, "other")));
+  assert.equal(other.post, null);
+  assert.equal(other.nextSelf.status, "waiting");
+  assert.deepEqual(other.nextSelf.waitingFor, [BG]);
+});
+
+test("the asking subagent's PreToolUse keeps its prompt open; any reminder re-asks", () => {
+  const self = waitingOn([BG], running(BG));
+  const tool = run({ hook_event_name: "PreToolUse", tool_name: "Bash", agent_id: BG }, [], self);
+  assert.equal(tool.post, null);
+  assert.deepEqual(tool.nextSelf.waitingFor, [BG]);
+  for (const agent_id of [BG, undefined]) {
+    const reminder = run({ hook_event_name: "Notification", notification_type: "idle_prompt", agent_id }, [], self);
+    assert.equal(reminder.post, "attention", String(agent_id));
+    assert.deepEqual(reminder.nextSelf.waitingFor, [BG], String(agent_id));
+  }
+});
+
+test("two open prompts: answering one keeps attention for the other", () => {
+  const both = run(PERMISSION, [], waitingOn([BG], running(BG))).nextSelf;
+  assert.deepEqual([...both.waitingFor].sort(), [MAIN, BG].sort());
+  const mainAnswered = run({ hook_event_name: "PostToolBatch" }, [], both);
+  assert.equal(mainAnswered.post, null);
+  assert.deepEqual(mainAnswered.nextSelf.waitingFor, [BG]);
+  const bgAnswered = run({ hook_event_name: "PostToolBatch", agent_id: BG }, [], mainAnswered.nextSelf);
+  assert.equal(bgAnswered.post, "thinking");
+  assert.equal(bgAnswered.nextSelf.status, "working");
+});
+
+test("a permission-prompt notification while waiting re-asks without taking the prompt over", () => {
+  const note = run({ hook_event_name: "Notification", notification_type: "permission_prompt" }, [], waitingOn([BG], running(BG)));
+  assert.equal(note.post, "attention");
+  assert.deepEqual(note.nextSelf.waitingFor, [BG]);
+});
+
+test("the user's next prompt clears every open prompt", () => {
+  const typed = run({ hook_event_name: "UserPromptSubmit" }, [], waitingOn([BG, MAIN], running(BG)));
+  assert.equal(typed.post, "reading");
+  assert.equal(typed.nextSelf.status, "working");
+  assert.deepEqual(typed.nextSelf.waitingFor, []);
+});
+
+test("a prompt whose subagent is no longer running ends", () => {
+  const next = run({ hook_event_name: "PostToolBatch" }, [], waitingOn([BG], {}));
+  assert.equal(next.post, "thinking");
+  assert.equal(next.nextSelf.status, "working");
+  assert.deepEqual(next.nextSelf.waitingFor, []);
+});
+
+test("SubagentStart answers like the main agent; an id-less SubagentStop never answers", () => {
+  const started = run({ hook_event_name: "SubagentStart", agent_id: "new" }, [], waitingOn([MAIN]));
+  assert.equal(started.post, "thinking");
+  assert.equal(started.nextSelf.status, "working");
+  const stopped = run({ hook_event_name: "SubagentStop" }, [], waitingOn([MAIN]));
+  assert.equal(stopped.post, null);
+  assert.deepEqual(stopped.nextSelf.waitingFor, [MAIN]);
+});
+
 
 test("Stop does not ring while a background subagent is running", () => {
   const started = run({ hook_event_name: "SubagentStart", agent_id: BG }, [], null);
@@ -216,5 +309,6 @@ test("next state records the requested animation and time", () => {
     updatedAt: NOW,
     oneShotUntil: 0,
     agents: {},
+    waitingFor: [],
   });
 });

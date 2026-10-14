@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_URL, getBaseUrl, getToken, loadDotEnv } from "../src/env.js";
+import { DEFAULT_MODE, DEFAULT_URL, getBaseUrl, getMode, getToken, loadDotEnv, parseMode } from "../src/env.js";
 
-const KEYS = ["TINY_ENGINEER_TOKEN", "TINY_ENGINEER_URL"];
+const KEYS = ["TINY_ENGINEER_TOKEN", "TINY_ENGINEER_URL", "TINY_ENGINEER_MODE"];
 
 function withEnv(values, fn) {
   const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
@@ -26,6 +26,27 @@ function projectWithDotEnv(contents) {
   writeFileSync(join(dir, ".env"), contents);
   return dir;
 }
+
+test("getMode reads TINY_ENGINEER_MODE and falls back to working-subagents", () => {
+  assert.equal(DEFAULT_MODE, "working-subagents");
+  withEnv({}, () => assert.equal(getMode(), DEFAULT_MODE));
+  withEnv({ TINY_ENGINEER_MODE: " muted-subagents " }, () => assert.equal(getMode(), "muted-subagents"));
+  withEnv({ TINY_ENGINEER_MODE: "loud" }, () => assert.equal(getMode(), DEFAULT_MODE));
+});
+
+test("parseMode accepts only known modes", () => {
+  assert.equal(parseMode("muted-subagents"), "muted-subagents");
+  assert.equal(parseMode(" working-subagents "), "working-subagents");
+  for (const bad of ["loud", "", undefined, "muted-subagents; rm -rf ~"]) assert.equal(parseMode(bad), null);
+});
+
+test("a project .env can set the mode", () => {
+  const dir = projectWithDotEnv("TINY_ENGINEER_MODE=muted-subagents\n");
+  withEnv({}, () => {
+    loadDotEnv(dir);
+    assert.equal(getMode(), "muted-subagents");
+  });
+});
 
 test("a project .env can set both the token and the URL", () => {
   const dir = projectWithDotEnv(

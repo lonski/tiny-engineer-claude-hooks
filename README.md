@@ -38,7 +38,8 @@ The installer:
 
 Start a new Claude Code session afterwards. `/hooks` lists the installed hooks.
 
-Options: `--dry-run` (show, don't write), `--uninstall`, `--help`.
+Options: `--mode <mode>` (see [Subagent mode](#subagent-mode)), `--dry-run` (show, don't write),
+`--uninstall`, `--help`.
 
 ### Update or move
 
@@ -64,6 +65,29 @@ export TINY_ENGINEER_TOKEN=...
 
 The installer never writes the token into Claude Code settings.
 
+### Subagent mode
+
+How subagents move the robot:
+
+| Mode | Subagents |
+| --- | --- |
+| `working-subagents` (default) | `reading` / `typing` / `thinking` play like the main agent's |
+| `muted-subagents` | Only the main agent works the robot; `SubagentStart` still plays `thinking` |
+
+In both modes a subagent's permission prompt plays `attention`, its `error` / `abort` play
+nothing, and the bell rings once, when the main agent is done.
+
+Pick one, first match wins:
+
+1. Bake it into the hooks: `node install.js --url http://<IP> --mode muted-subagents`
+   (a later `node install.js` without `--mode` keeps it)
+2. Claude Code settings (`~/.claude/settings.json`), for every session:
+   `{ "env": { "TINY_ENGINEER_MODE": "muted-subagents" } }`
+3. A project's `.env`, or the shell Claude Code starts from: `TINY_ENGINEER_MODE=muted-subagents`
+
+`install.js` rejects an unknown `--mode`. The hooks never fail on one: an unknown
+`TINY_ENGINEER_MODE` or baked `--mode` falls back to `working-subagents`.
+
 ## What the robot does
 
 | Claude Code event | Animation |
@@ -80,9 +104,10 @@ The installer never writes the token into Claude Code settings.
 | `SubagentStop` | (nothing; marks that subagent finished) |
 | `Stop` | `ring`, once no background subagent is still running |
 
-Only the main agent moves the robot. Hooks also fire inside subagents (their input carries
-`agent_id`); those events update the session's state but play nothing, except a subagent's
-permission prompt, which still plays `attention`. `SubagentStart` still plays `thinking`.
+Hooks also fire inside subagents (their input carries `agent_id`). By default a subagent's
+`reading`, `typing` and `thinking` play like the main agent's (switch with
+[Subagent mode](#subagent-mode)), and its permission prompt plays `attention`; its `error` and
+`abort` (failed or denied tool calls) play nothing. Subagents never ring.
 
 The bell means the whole job is done. A turn that ends while background subagents are still
 running plays nothing; each one reports back with a new turn, and the turn after the last one
@@ -96,7 +121,9 @@ Each hook records its session in `~/.cache/tiny-engineer/claude-code/sessions/`
 (override with `TINY_ENGINEER_STATE_DIR`) and checks the other sessions before posting:
 
 - A session asking for permission keeps the robot in `attention`; other sessions' poses are
-  skipped until you answer it.
+  skipped until you answer it. Inside the session each prompt belongs to the agent that asked
+  (the main agent or a subagent): only its own answer closes it, and the other agents' poses are
+  skipped too. Your next prompt, or the asking subagent ending, closes it as well.
 - `ring`, `welcome`, `abort`, and `error` are not cut short by another session's
   `typing` / `reading` / `thinking`.
 - `welcome` / `wakeup` play only when no other session is running; `sleep` only when the last

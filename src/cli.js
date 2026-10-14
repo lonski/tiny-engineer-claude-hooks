@@ -1,5 +1,5 @@
 import { decide } from "./arbiter.js";
-import { DEFAULT_URL, getBaseUrl, getToken, loadDotEnv } from "./env.js";
+import { DEFAULT_MODE, DEFAULT_URL, MODES, getBaseUrl, getMode, getToken, loadDotEnv, parseMode } from "./env.js";
 import { animationForEvent } from "./map.js";
 import { postAnim } from "./post.js";
 import {
@@ -19,6 +19,8 @@ Install it into Claude Code with: node install.js
 
 Options:
   --url <base>   Robot base URL (default: TINY_ENGINEER_URL, else ${DEFAULT_URL})
+  --mode <mode>  ${MODES.join(" | ")} (default: TINY_ENGINEER_MODE,
+                 else ${DEFAULT_MODE})
   -h, --help     Show this help
 
 Auth:
@@ -57,16 +59,18 @@ Event map:
   StopFailure                                      → error
 
 Subagents:
-  Events carrying agent_id come from a subagent. They update session state but
-  post nothing, except PermissionRequest / a blocking Notification (attention).
-  SubagentStart is the main agent delegating and still posts thinking.
+  Events carrying agent_id come from a subagent. Its permission prompts
+  (attention) post; its error and abort do not. working-subagents also posts
+  its reading/typing/thinking; muted-subagents only its SubagentStart (thinking).
   A Stop while background subagents still run posts nothing; the turn after
   the last one reports back rings. A subagent silent for 10 min counts as done.
 
 Multiple sessions:
   Hooks from concurrent sessions on this computer share state in
   TINY_ENGINEER_STATE_DIR (default ~/.cache/tiny-engineer/claude-code/sessions).
-  A session asking for permission keeps attention until it is answered;
+  A session asking for permission keeps attention until it is answered, and
+  only the agent that asked (main agent or that subagent) can answer it, or
+  the user's next prompt;
   ring/welcome/abort/error are not cut short by another session's work poses;
   welcome/wakeup play only for the first session and sleep only for the last.
   Events without session_id, or any state error, behave as a single session.
@@ -79,10 +83,11 @@ Examples:
 
 /**
  * @param {string[]} argv
- * @returns {{ help: boolean, url?: string, error?: string }}
+ * @returns {{ help: boolean, url?: string, mode?: string, error?: string }}
  */
 export function parseArgs(argv) {
   let url;
+  let mode;
   let help = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -102,10 +107,18 @@ export function parseArgs(argv) {
       if (!url) return { help: false, error: "--url requires a value" };
       continue;
     }
+    if (arg === "--mode" || arg.startsWith("--mode=")) {
+      const value = arg === "--mode" ? argv[++i] : arg.slice("--mode=".length);
+      if (!value) return { help: false, error: "--mode requires a value" };
+      // An unknown mode (hand-edited settings, a renamed mode) must not silence
+      // every hook, so it falls back like TINY_ENGINEER_MODE does.
+      mode = parseMode(value) ?? undefined;
+      continue;
+    }
     return { help: false, error: `Unknown argument: ${arg}` };
   }
 
-  return { help, url };
+  return { help, url, mode };
 }
 
 function readStdin() {
@@ -192,7 +205,7 @@ export async function run(argv) {
   if (event?.hook_event_name === "SessionStart" && event.source !== "startup") {
     await new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS));
   }
-  const anim = arbitrate(event, animationForEvent(event));
+  const anim = arbitrate(event, animationForEvent(event, opts.mode ?? getMode()));
   if (anim) {
     await postAnim(opts.url ?? getBaseUrl(), anim, getToken());
     // A timed-out fetch leaves its connect attempt open, which keeps Node alive

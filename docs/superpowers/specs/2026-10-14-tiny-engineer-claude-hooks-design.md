@@ -73,8 +73,10 @@ apart from upstream's (`tiny-engineer-claude-code`, `hook claude-code`).
 - Each event gets `{ "hooks": [{ "type": "command", "command": <cmd>, "async": true }] }`,
   where `<cmd>` is `node "<absolute bin path>"` plus ` --url "<base>"` when `--url` is given.
   Backslashes in the path become `/` (works for Node on Windows and in Claude Code's shell).
-- Idempotent: first remove every hook whose command contains `tiny-engineer-claude-hooks`,
-  `tiny-engineer-claude-code`, or `hook claude-code` from the global file, then add ours.
+- Idempotent: first remove every managed hook from the global file, then add ours. Managed =
+  command matches this repo's bin (`tiny-engineer-claude-hooks.js`), upstream's deprecated
+  bin (`tiny-engineer-claude-code`, as a whole word), or upstream's unified CLI
+  (`tiny-engineer[@version|.js] hook claude-code`). Unrelated user hooks never match.
   Wrappers and event keys left empty by that removal are dropped. Re-running after moving
   the clone fixes the paths.
 - Foreign hooks and all other settings keys are preserved.
@@ -82,6 +84,8 @@ apart from upstream's (`tiny-engineer-claude-code`, `hook claude-code`).
   `settings.json.bak-<ISO timestamp>` before writing. Unparsable or non-object JSON → print an
   error, write nothing, exit 1.
 - `--url` must be an `http://` or `https://` URL without whitespace or quotes; otherwise exit 1.
+- The clone path must not contain `"`, `` ` ``, `$` or `\` (after `\` → `/`); otherwise exit 1
+  with a message, nothing written. *(Added after final review.)*
 - `--dry-run` prints what would change and writes nothing.
 - `--uninstall` removes only managed entries (same markers), with the same backup rule.
 - After install (not uninstall, not dry-run): `GET <base>/health` with a 2 s timeout, where
@@ -120,6 +124,10 @@ Status transitions, applied for every event of the session:
   `PermissionDenied`, `Stop`, …), which clears `waiting`.
 - `Notification` with `notification_type` `idle_prompt` (or any other type, or none)
   does not set `waiting`.
+- A `PreToolUse` or non-blocking `Notification` of a session that is already (freshly)
+  `waiting` keeps it `waiting` and posts nothing (a reminder still posts `attention`):
+  neither means the user answered, and a `PreToolUse` can race its own
+  `PermissionRequest`. *(Added after final review.)*
 
 Lifecycle:
 
@@ -131,7 +139,10 @@ Lifecycle:
 - A `waiting` status older than **30 min** no longer blocks other sessions.
 
 "Other live sessions" = files other than the current session's, with
-`updatedAt` within 2 h.
+`updatedAt` within 2 h. For the `SessionStart` / `SessionEnd` overrides only, another
+session counts when it had an event within **10 min** or is freshly `waiting`, so a
+session that died without `SessionEnd` mutes `welcome` / `sleep` for at most 10 min.
+*(Added after final review.)*
 
 ## Decision rules
 
@@ -179,6 +190,13 @@ The robot must never stall or break the agent.
 - A corrupt or unparsable file of another session is ignored.
 - Event without `session_id` → stateless fallback.
 - Writes are atomic: write a temp file in the same dir, then `rename`.
+- Read → decide → write of one session runs under `<session_id>.lock` (exclusive create,
+  5 ms retry, 500 ms timeout → stateless fallback; a lock older than 2 s is taken over).
+  *(Added after final review: concurrent hooks of one session lost `waiting` ~40% of the
+  time without it.)*
+- `SessionStart` with a source other than `startup` waits 300 ms before reading state, so
+  the `SessionEnd` of the session it replaces (`/clear`, `/resume`) can remove its file
+  first. *(Added after final review.)*
 - `session_id` is restricted to `^[A-Za-z0-9_-]{1,128}$`; anything else → stateless fallback
   (prevents path traversal).
 - Unchanged from upstream: no stdout in hook mode, 2 s HTTP timeout,

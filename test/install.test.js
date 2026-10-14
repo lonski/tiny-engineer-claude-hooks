@@ -132,6 +132,44 @@ test("removeHooks strips only managed entries and drops what it emptied", () => 
   assert.deepEqual(removeHooks(addHooks({}, CMD)).settings, {});
 });
 
+test("only Tiny Engineer hooks count as managed", () => {
+  const userHooks = [
+    { type: "command", command: "my-hook claude-code-lint" },
+    { type: "command", command: "bash ~/tiny-engineer-claude-hooks/scripts/notify.sh" },
+    { type: "command", command: "echo tiny-engineer-claude-code-notes" },
+  ];
+  const upstreamForms = [
+    "npx -y tiny-engineer hook claude-code",
+    "npx -y tiny-engineer@0.1.1 hook claude-code",
+    "npx -y tiny-engineer-claude-code",
+    'node "/x/packages/tiny-engineer-cli/bin/tiny-engineer.js" hook claude-code',
+  ].map((command) => ({ type: "command", command }));
+  const { settings, removed } = removeHooks({ hooks: { Stop: [{ hooks: [...userHooks, ...upstreamForms] }] } });
+  assert.equal(removed, upstreamForms.length);
+  assert.deepEqual(settings.hooks.Stop, [{ hooks: userHooks }]);
+});
+
+test("refuses a clone path that a shell would mangle", async () => {
+  const bad = [
+    "/home/u/a $HOME b/bin/tiny-engineer-claude-hooks.js",
+    '/home/u/"q"/bin/tiny-engineer-claude-hooks.js',
+    "/home/u/`id`/bin/tiny-engineer-claude-hooks.js",
+  ];
+  for (const binPath of bad) {
+    const dir = tempConfig();
+    const errors = [];
+    const code = await runInstall(["--dry-run"], {
+      binPath,
+      env: { CLAUDE_CONFIG_DIR: dir },
+      log: () => {},
+      error: (line) => errors.push(line),
+    });
+    assert.equal(code, 1, binPath);
+    assert.match(errors.join("\n"), /folder path/, binPath);
+    assert.equal(existsSync(join(dir, "settings.json")), false, binPath);
+  }
+});
+
 test("creates settings when missing and reports an unreachable robot", async () => {
   const dir = tempConfig();
   const url = await closedUrl();

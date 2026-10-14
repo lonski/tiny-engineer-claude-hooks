@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,6 +62,38 @@ test("two sessions: waiting wins, sleep only for the last one", async () => {
       assert.equal(stdout, "", JSON.stringify(event));
     }
     assert.deepEqual(robot.posts, ["welcome", "attention", "thinking", "reading", "sleep"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("/clear: the new session wakes up even when the old one's SessionEnd races it", async () => {
+  const robot = await startRobot();
+  const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+  try {
+    await hook(robot, dir, { session_id: A, hook_event_name: "SessionStart", source: "startup" });
+    await Promise.all([
+      hook(robot, dir, { session_id: A, hook_event_name: "SessionEnd", reason: "clear" }),
+      hook(robot, dir, { session_id: B, hook_event_name: "SessionStart", source: "clear" }),
+    ]);
+    assert.deepEqual(robot.posts, ["welcome", "wakeup"]);
+  } finally {
+    await robot.close();
+  }
+});
+
+test("a PermissionRequest racing its own PreToolUse always leaves the session waiting", async () => {
+  const robot = await startRobot();
+  try {
+    for (let i = 0; i < 10; i++) {
+      const dir = mkdtempSync(join(tmpdir(), "te-hooks-state-"));
+      await Promise.all([
+        hook(robot, dir, { session_id: A, hook_event_name: "PreToolUse", tool_name: "Bash" }),
+        hook(robot, dir, { session_id: A, hook_event_name: "PermissionRequest" }),
+      ]);
+      const state = JSON.parse(readFileSync(join(dir, `${A}.json`), "utf8"));
+      assert.equal(state.status, "waiting", `run ${i}`);
+    }
   } finally {
     await robot.close();
   }

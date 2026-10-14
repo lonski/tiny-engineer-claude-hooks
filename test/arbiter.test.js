@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ONE_SHOT_MS, WAITING_TTL_MS, decide, isBlocking } from "../src/arbiter.js";
+import { LIFECYCLE_ACTIVE_MS, ONE_SHOT_MS, WAITING_TTL_MS, decide, isBlocking } from "../src/arbiter.js";
 import { animationForEvent } from "../src/map.js";
 
 const NOW = 1_800_000_000_000;
@@ -48,8 +48,8 @@ test("single session: every event posts exactly what the map returns", () => {
     STOP,
     { hook_event_name: "StopFailure" },
   ];
-  // Own previous state must never filter its own events.
-  const self = { status: "waiting", anim: "ring", updatedAt: NOW - 10, oneShotUntil: NOW + 5000 };
+  // Own previous state must never filter its own events (a waiting self is covered below).
+  const self = { status: "working", anim: "ring", updatedAt: NOW - 10, oneShotUntil: NOW + 5000 };
   for (const event of events) {
     assert.equal(run(event, [], self).post, animationForEvent(event), JSON.stringify(event));
   }
@@ -67,6 +67,23 @@ test("SessionEnd sleeps only for the last session and always drops own state", (
   assert.deepEqual(run({ hook_event_name: "SessionEnd", reason: "clear" }, []), { post: null, nextSelf: null });
 });
 
+test("a dormant session does not hold back welcome or sleep", () => {
+  const start = { hook_event_name: "SessionStart", source: "startup" };
+  const end = { hook_event_name: "SessionEnd" };
+  const dormant = other({ updatedAt: NOW - LIFECYCLE_ACTIVE_MS - 1 });
+  assert.equal(run(start, [dormant]).post, "welcome");
+  assert.equal(run(end, [dormant]).post, "sleep");
+  const recent = other({ updatedAt: NOW - LIFECYCLE_ACTIVE_MS + 1 });
+  assert.equal(run(start, [recent]).post, null);
+  assert.equal(run(end, [recent]).post, null);
+});
+
+test("a dormant session that is still waiting keeps welcome and sleep quiet", () => {
+  const waiting = other({ status: "waiting", updatedAt: NOW - LIFECYCLE_ACTIVE_MS - 1 });
+  assert.equal(run({ hook_event_name: "SessionStart", source: "startup" }, [waiting]).post, null);
+  assert.equal(run({ hook_event_name: "SessionEnd" }, [waiting]).post, null);
+});
+
 test("another waiting session blocks work and one-shots", () => {
   const waiting = other({ status: "waiting", anim: "attention" });
   assert.equal(run(BASH, [waiting]).post, null);
@@ -80,6 +97,18 @@ test("a session entering waiting always posts attention", () => {
   const result = run(PERMISSION, [waiting]);
   assert.equal(result.post, "attention");
   assert.equal(result.nextSelf.status, "waiting");
+});
+
+test("a waiting session stays waiting through PreToolUse and reminders", () => {
+  const self = { status: "waiting", anim: "attention", updatedAt: NOW - 5000, oneShotUntil: 0 };
+  const tool = run(BASH, [], self);
+  assert.equal(tool.post, null);
+  assert.equal(tool.nextSelf.status, "waiting");
+  const reminder = run({ hook_event_name: "Notification", notification_type: "idle_prompt" }, [], self);
+  assert.equal(reminder.post, "attention");
+  assert.equal(reminder.nextSelf.status, "waiting");
+  const stale = { ...self, updatedAt: NOW - WAITING_TTL_MS - 1 };
+  assert.equal(run(BASH, [], stale).nextSelf.status, "working");
 });
 
 test("answering clears waiting", () => {

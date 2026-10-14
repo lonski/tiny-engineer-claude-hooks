@@ -7,6 +7,7 @@ import {
   readSessions,
   removeSession,
   stateDir,
+  withSessionLock,
   writeSession,
 } from "./sessions.js";
 
@@ -112,6 +113,11 @@ function readStdin() {
   });
 }
 
+// /clear and /resume fire the old session's SessionEnd and the new session's
+// SessionStart together. Waiting this long lets the old hook remove its state
+// first, so the new session is not muted by its own predecessor.
+const RESTART_SETTLE_MS = 300;
+
 /**
  * Filter an animation against the other live sessions and record this session's
  * state. Without a usable session_id or state dir, return anim unchanged.
@@ -124,25 +130,26 @@ export function arbitrate(event, anim, now = Date.now()) {
   const id = event?.session_id;
   if (!isValidSessionId(id)) return anim;
 
-  let dir;
-  let decision;
   try {
-    dir = stateDir();
-    const sessions = readSessions(dir, now);
-    const self = sessions.get(id) ?? null;
-    sessions.delete(id);
-    decision = decide({ event, anim, self, others: [...sessions.values()], now });
+    const dir = stateDir();
+    // Hooks of one session run concurrently (a PermissionRequest races its own
+    // PreToolUse), so read → decide → write happens under the session's lock.
+    return withSessionLock(dir, id, () => {
+      const sessions = readSessions(dir, now);
+      const self = sessions.get(id) ?? null;
+      sessions.delete(id);
+      const decision = decide({ event, anim, self, others: [...sessions.values()], now });
+      try {
+        if (decision.nextSelf) writeSession(dir, id, decision.nextSelf);
+        else removeSession(dir, id);
+      } catch {
+        // State is best effort; the decision still stands.
+      }
+      return decision.post;
+    });
   } catch {
     return anim;
   }
-
-  try {
-    if (decision.nextSelf) writeSession(dir, id, decision.nextSelf);
-    else removeSession(dir, id);
-  } catch {
-    // State is best effort; the decision still stands.
-  }
-  return decision.post;
 }
 
 /**
@@ -173,6 +180,9 @@ export async function run(argv) {
     }
   }
 
+  if (event?.hook_event_name === "SessionStart" && event.source !== "startup") {
+    await new Promise((resolve) => setTimeout(resolve, RESTART_SETTLE_MS));
+  }
   const anim = arbitrate(event, animationForEvent(event));
   if (anim) {
     await postAnim(opts.url ?? getBaseUrl(), anim, getToken());

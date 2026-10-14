@@ -1,6 +1,13 @@
 /** A waiting session older than this stops blocking others. */
 export const WAITING_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * A session silent this long no longer holds back another session's welcome or
+ * sleep, so one that ended without SessionEnd (crash, closed terminal) does not
+ * mute them for the whole session TTL.
+ */
+export const LIFECYCLE_ACTIVE_MS = 10 * 60 * 1000;
+
 export const WORK_ANIMS = new Set(["typing", "reading", "thinking"]);
 
 // Approximate gesture lengths. Other sessions' work poses wait this long so the
@@ -13,6 +20,10 @@ export const ONE_SHOT_MS = new Map([
 ]);
 
 const BLOCKING_NOTIFICATIONS = new Set(["permission_prompt", "elicitation_dialog"]);
+
+// Events that do not mean the user answered: a PreToolUse racing (or running in
+// parallel with) the permission prompt, and reminder notifications.
+const KEEPS_WAITING = new Set(["PreToolUse", "Notification"]);
 
 /**
  * @typedef {{ status: "waiting" | "working", anim: string | null, updatedAt: number, oneShotUntil: number }} SessionState
@@ -29,6 +40,23 @@ export function isBlocking(event) {
 }
 
 /**
+ * @param {SessionState} session
+ * @param {number} now
+ */
+function isFreshWaiting(session, now) {
+  return session.status === "waiting" && now - session.updatedAt < WAITING_TTL_MS;
+}
+
+/**
+ * True when another session should keep welcome / wakeup / sleep quiet.
+ * @param {SessionState[]} others
+ * @param {number} now
+ */
+function holdsLifecycle(others, now) {
+  return others.some((o) => now - o.updatedAt < LIFECYCLE_ACTIVE_MS || isFreshWaiting(o, now));
+}
+
+/**
  * @param {string | undefined} name
  * @param {string | null} anim
  * @param {boolean} waiting
@@ -38,12 +66,10 @@ export function isBlocking(event) {
  */
 function choosePost(name, anim, waiting, others, now) {
   if (!anim) return null;
-  if (name === "SessionStart" && others.length > 0) return null;
+  if (name === "SessionStart" && holdsLifecycle(others, now)) return null;
   if (waiting) return anim;
 
-  const otherWaiting = others.some(
-    (o) => o.status === "waiting" && now - o.updatedAt < WAITING_TTL_MS
-  );
+  const otherWaiting = others.some((o) => isFreshWaiting(o, now));
   if (otherWaiting) return null;
 
   const otherOneShot = others.some((o) => o.oneShotUntil > now);
@@ -67,11 +93,17 @@ export function decide({ event, anim, self = null, others = [], now }) {
   const name = event?.hook_event_name;
 
   if (name === "SessionEnd") {
-    return { post: others.length > 0 ? null : anim, nextSelf: null };
+    return { post: holdsLifecycle(others, now) ? null : anim, nextSelf: null };
   }
 
-  const waiting = isBlocking(event);
-  const post = choosePost(name, anim, waiting, others, now);
+  const blocking = isBlocking(event);
+  const keptWaiting =
+    !blocking && KEEPS_WAITING.has(name) && self !== null && isFreshWaiting(self, now);
+  const waiting = blocking || keptWaiting;
+  // A session still waiting on the user only ever re-asks for attention.
+  const post = keptWaiting
+    ? anim === "attention" ? anim : null
+    : choosePost(name, anim, waiting, others, now);
 
   let oneShotUntil = self?.oneShotUntil ?? 0;
   if (post) oneShotUntil = ONE_SHOT_MS.has(post) ? now + ONE_SHOT_MS.get(post) : 0;

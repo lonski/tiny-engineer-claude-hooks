@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   readSessions,
   removeSession,
   stateDir,
+  withSessionLock,
   writeSession,
 } from "../src/sessions.js";
 
@@ -88,6 +89,32 @@ test("temp and corrupt files are skipped", () => {
   writeFileSync(join(dir, "good.json.123.tmp"), JSON.stringify(state()));
   writeFileSync(join(dir, "bad.name.json"), JSON.stringify(state()));
   assert.deepEqual([...readSessions(dir, NOW).keys()], ["good"]);
+});
+
+test("withSessionLock runs the callback, returns its value and releases the lock", () => {
+  const dir = join(tempDir(), "sessions");
+  assert.equal(withSessionLock(dir, "a", () => 42), 42);
+  assert.deepEqual(readdirSync(dir), []);
+  assert.throws(() => withSessionLock(dir, "a", () => { throw new Error("boom"); }), /boom/);
+  assert.deepEqual(readdirSync(dir), []);
+});
+
+test("withSessionLock waits for a held lock, then gives up", () => {
+  const dir = tempDir();
+  writeFileSync(join(dir, "a.lock"), "");
+  const started = Date.now();
+  assert.throws(() => withSessionLock(dir, "a", () => 1, { timeoutMs: 60, staleMs: 10_000 }), /lock/);
+  assert.ok(Date.now() - started >= 50);
+});
+
+test("withSessionLock takes over a stale lock", () => {
+  const dir = tempDir();
+  const lock = join(dir, "a.lock");
+  writeFileSync(lock, "");
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  assert.equal(withSessionLock(dir, "a", () => "ok", { timeoutMs: 60, staleMs: 1000 }), "ok");
+  assert.equal(existsSync(lock), false);
 });
 
 test("removeSession deletes the file and ignores a missing one", () => {

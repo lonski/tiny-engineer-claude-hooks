@@ -94,6 +94,16 @@ Each hook records its session in `~/.cache/tiny-engineer/claude-code/sessions/`
 With one session, behavior is the same as upstream. Sessions on different computers do not
 see each other.
 
+### Known limitations
+
+- Claude Code sends no hook when you approve a permission prompt, only when the tool finishes.
+  While an approved long-running tool runs, that session still counts as waiting, so other
+  sessions' poses (their bell too) are skipped until it finishes (at most 30 min).
+- A session that ends without `SessionEnd` (closed terminal, crash) keeps `welcome` / `sleep`
+  of other sessions quiet for up to 10 minutes.
+- Hook processes of one session take a short per-session lock (`<session>.lock` in the state
+  directory); a lock left behind by a killed hook is taken over after 2 s.
+
 ## Troubleshooting
 
 | Symptom | Try |

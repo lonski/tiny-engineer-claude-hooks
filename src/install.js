@@ -19,12 +19,20 @@ export const CLAUDE_EVENTS = [
   "StopFailure",
 ];
 
-// Ours, plus upstream tiny-engineer's deprecated bin and unified CLI, so a global
-// install never runs two Tiny Engineer hooks for one event.
-export const MARKERS = ["tiny-engineer-claude-hooks", "tiny-engineer-claude-code", "hook claude-code"];
+// Ours, plus upstream tiny-engineer's deprecated bin and unified CLI (node or npx,
+// optionally versioned), so a global install never runs two Tiny Engineer hooks
+// for one event. Anchored on the bin names so unrelated user hooks never match.
+export const MANAGED_PATTERNS = [
+  /tiny-engineer-claude-hooks\.js/,
+  /tiny-engineer-claude-code(\.js)?(["'\s]|$)/,
+  /tiny-engineer(@[^\s"']+|\.js)?["']?\s+hook\s+claude-code(\s|$)/,
+];
 
 // The URL is embedded in a shell command, so reject anything a shell would interpret.
 const URL_PATTERN = /^https?:\/\/[^\s"'`\\$]+$/;
+
+// The bin path is embedded in double quotes; these characters would break or expand it.
+const UNSAFE_PATH = /["`$\\]/;
 
 const HELP = `Usage: node install.js [--url <base>] [--uninstall] [--dry-run]
 
@@ -61,7 +69,7 @@ export function hookCommand(binPath, url) {
  * @param {unknown} command
  */
 function isManaged(command) {
-  return typeof command === "string" && MARKERS.some((marker) => command.includes(marker));
+  return typeof command === "string" && MANAGED_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 /**
@@ -206,6 +214,13 @@ export async function runInstall(
   if (opts.help) {
     log(HELP);
     return 0;
+  }
+  if (UNSAFE_PATH.test(binPath.replace(/\\/g, "/"))) {
+    error(
+      `This folder path contains a character a shell would interpret (" \` $ or \\):\n  ${binPath}\n` +
+        "Move the clone to a folder path without them and run install.js again. Nothing written."
+    );
+    return 1;
   }
 
   const path = settingsPath(env);

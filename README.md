@@ -100,14 +100,15 @@ Pick one, first match wins:
 | `PermissionRequest`, `Notification` | `attention` |
 | `Notification` `idle_prompt` (about 1 min after a finished turn) | (skip), unless a prompt is still waiting |
 | `PermissionDenied` | `abort` |
-| `PostToolUseFailure`, `StopFailure` | `error` |
+| `StopFailure` (a turn ended on an API error) | `error` |
+| `PostToolUseFailure` (a failed tool call, e.g. a command exiting 1) | (nothing; Claude recovers on its own) |
 | `SubagentStop` | (nothing; marks that subagent finished) |
 | `Stop` | `ring`, once no background subagent is still running |
 
 Hooks also fire inside subagents (their input carries `agent_id`). By default a subagent's
 `reading`, `typing` and `thinking` play like the main agent's (switch with
-[Subagent mode](#subagent-mode)), and its permission prompt plays `attention`; its `error` and
-`abort` (failed or denied tool calls) play nothing. Subagents never ring.
+[Subagent mode](#subagent-mode)), and its permission prompt plays `attention`; its `abort` (a
+denied tool call) plays nothing. Subagents never ring.
 
 The bell means the whole job is done. A turn that ends while background subagents are still
 running plays nothing; each one reports back with a new turn, and the turn after the last one
@@ -126,7 +127,7 @@ Each hook records its session in `~/.cache/tiny-engineer/claude-code/sessions/`
   skipped too. Your next prompt, or the asking subagent ending, closes it as well. A
   subagent's prompt stays open however long the subagent waits on it.
 - `ring`, `welcome`, `abort`, and `error` play to the end: no `typing` / `reading` / `thinking`
-  cuts them short, whether from another session or the same one (a failed tool's next step,
+  cuts them short, whether from another session or the same one (its next step,
   its subagents). `attention` and other one-shots still replace them.
 - `welcome` / `wakeup` play only when no other session is running; `sleep` only when the last
   session ends.

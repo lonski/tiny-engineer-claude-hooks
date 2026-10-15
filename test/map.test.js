@@ -30,7 +30,8 @@ test("lifecycle events map to their poses", () => {
   );
   assert.equal(
     animationForEvent({ hook_event_name: "PostToolUseFailure" }),
-    "error"
+    null,
+    "a failed tool call is routine; error is for a turn that died (StopFailure)"
   );
   assert.equal(animationForEvent({ hook_event_name: "PreCompact" }), "thinking");
   assert.equal(

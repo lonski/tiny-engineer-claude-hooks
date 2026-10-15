@@ -149,6 +149,11 @@ session that died without `SessionEnd` mutes `welcome` / `sleep` for at most 10 
 
 ## Decision rules
 
+`PostToolUseFailure` maps to nothing *(changed after use)*: a failed tool call (a command
+exiting 1, a missing file, a blocked command) is routine and Claude recovers on its own, and with
+several sessions on one robot it flashed `error` for chats the user was not looking at. `error`
+is left to `StopFailure`, a turn that died. The hook stays installed: it still answers a prompt.
+
 Subagents *(added after use)*: hooks from settings files also fire inside subagents, and their
 input carries `agent_id` (main-agent events, including `--agent` sessions, have none).
 `animationForEvent(event, mode)` always keeps blocking events (`isBlocking`) and drops `error`,

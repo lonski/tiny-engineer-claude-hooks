@@ -320,7 +320,7 @@ test("a subagent finishing does not answer a waiting prompt", () => {
 });
 
 test("a session's own work poses do not cut its one-shot short", () => {
-  const failed = run({ hook_event_name: "PostToolUseFailure" }, [], {
+  const failed = run({ hook_event_name: "StopFailure" }, [], {
     status: "working",
     anim: "typing",
     updatedAt: NOW - 1000,

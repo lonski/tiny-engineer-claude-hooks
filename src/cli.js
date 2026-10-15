@@ -48,7 +48,7 @@ Event map:
   other PreToolUse tools                           → (skip)
   SubagentStart                                    → thinking
   PostToolBatch                                    → thinking
-  PostToolUseFailure                               → error
+  PostToolUseFailure                               → (skip; routine, Claude recovers)
   PreCompact                                       → thinking
   PermissionRequest                                → attention
   PermissionDenied                                 → abort

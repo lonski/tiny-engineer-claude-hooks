@@ -96,7 +96,7 @@ function choosePost(name, anim, waiting, self, others, now) {
   if (otherWaiting) return null;
 
   // A one-shot gesture plays to the end: no work pose cuts it short, whether it
-  // comes from this session (a failed tool's PostToolBatch, its subagents) or another.
+  // comes from this session (its next step, its subagents) or another.
   const oneShotPlaying = (self?.oneShotUntil ?? 0) > now || others.some((o) => o.oneShotUntil > now);
   if (WORK_ANIMS.has(anim) && oneShotPlaying) return null;
 

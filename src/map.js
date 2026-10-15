@@ -21,7 +21,6 @@ const EVENT_ANIM = new Map([
   ["UserPromptSubmit", "reading"],
   ["SubagentStart", "thinking"],
   ["PostToolBatch", "thinking"],
-  ["PostToolUseFailure", "error"],
   ["PreCompact", "thinking"],
   ["PermissionRequest", "attention"],
   ["PermissionDenied", "abort"],
